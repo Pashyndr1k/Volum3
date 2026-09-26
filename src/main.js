@@ -8,7 +8,7 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { generateCluster } from './cluster.js';
 import { assignVoices, noteFor, chordAt, chordSpread } from './music.js';
 import { pairFor, INK } from './palette.js';
-import { ClusterPhysics } from './physics.js';
+import { ClusterPhysics, TUNING } from './physics.js';
 import { Cubes } from './cubes.js';
 import { Emissions } from './emissions.js';
 import { Transport } from './transport.js';
@@ -30,12 +30,25 @@ const ORBIT_TILT = new THREE.Quaternion().setFromEuler(new THREE.Euler(0.22, 0, 
 const HEAT_TAU = 0.3; // seconds; a struck cube is back to its colour in about 4–6 steps
 const TOUCH_COOLDOWN = 0.15;
 const MAX_VOICES_PER_STEP = 5;
+const MAX_VOICES_PER_TOUCH = 4;
+
+// Panel levels → physical values. Level 0/1 is the first entry.
+const ZONE_RADIUS = [0, 1.2, 2, 3, 4.2]; // ZONE 0…4: touch radius in cube units (0 = one cube)
+const FORCE_MULT = [1, 2, 3.5, 5, 7]; // FORCE 1…5
+const SPIN_KICK = [0, 3, 6, 10, 15]; // SPIN 0…4: rad/s about a random axis
+const LOOSENESS = [0.3, 0.55, 1, 1.7, 2.8]; // RETURN 1…5: slow and floaty → quick and tight
+const OUTWARD = 0.75; // how much of every push points away from the block's centre
 
 const state = {
   seed: intParam('seed', 0, 2147483647, randomSeed()),
   mode: params.get('mode') === 'touch' ? 'touch' : 'orbit',
   bpm: intParam('bpm', 50, 180, 100),
   grain: intParam('grain', 1, 5, 3),
+  zone: intParam('zone', 0, 4, 1),
+  force: intParam('force', 1, 5, 3),
+  spin: intParam('spin', 0, 4, 2),
+  ret: intParam('return', 1, 5, 3),
+  caves: intParam('caves', 1, 3, 2),
   playing: false,
   unlocked: false,
 };
@@ -45,6 +58,11 @@ function syncUrl() {
   if (state.mode !== 'orbit') q.set('mode', state.mode);
   if (state.bpm !== 100) q.set('bpm', String(state.bpm));
   if (state.grain !== 3) q.set('grain', String(state.grain));
+  if (state.zone !== 1) q.set('zone', String(state.zone));
+  if (state.force !== 3) q.set('force', String(state.force));
+  if (state.spin !== 2) q.set('spin', String(state.spin));
+  if (state.ret !== 3) q.set('return', String(state.ret));
+  if (state.caves !== 2) q.set('caves', String(state.caves));
   history.replaceState(null, '', `${location.pathname}?${q}`);
 }
 
@@ -163,7 +181,7 @@ function stepOf(rest) {
 function build(seed) {
   if (world) world.cubes.dispose();
   emissions.clear();
-  const { pieces, edges } = generateCluster(seed);
+  const { pieces, edges } = generateCluster(seed, state.caves);
   for (const p of pieces) p.step = stepOf(p.rest);
   assignVoices(pieces, STEPS, seed);
   for (const p of pieces) p.color = pairFor(p.voice.index).bg;
@@ -189,7 +207,27 @@ function build(seed) {
   };
   cubes.update(pieces, physics, world.glow);
   cubes.mesh.computeBoundingSphere();
-  cubes.mesh.boundingSphere.radius += 1.5; // cubes move; keep raycasts from being culled early
+  cubes.mesh.boundingSphere.radius += TUNING.maxOffset; // cubes fly; keep raycasts from being culled early
+}
+
+function applyTuning() {
+  TUNING.force = FORCE_MULT[state.force - 1];
+  TUNING.spinKick = SPIN_KICK[state.spin];
+  TUNING.looseness = LOOSENESS[state.ret - 1];
+  world?.physics.retune();
+}
+
+/*
+  Where a struck cube goes: mostly straight out from the block's centre, bent toward the thing
+  that hit it — the indicator, or the pointer's ray. Cubes in the hollow core, which have no
+  clear "out", just follow the hit.
+*/
+function pushDir(i, toward) {
+  const p = world.pieces[i];
+  const o = i * 3;
+  const out = new THREE.Vector3(p.rest.x + world.physics.u[o], p.rest.y + world.physics.u[o + 1], p.rest.z + world.physics.u[o + 2]);
+  if (out.length() < 0.8) return toward.clone().normalize();
+  return out.normalize().multiplyScalar(OUTWARD).addScaledVector(toward, 1 - OUTWARD * 0.6).normalize();
 }
 
 // ---- Striking -------------------------------------------------------------------------------
@@ -255,9 +293,12 @@ function applyPending(t) {
     pending.splice(k, 1);
     if (s.gen !== world) continue;
     const p = world.pieces[s.i];
-    // Toward the indicator, where it was at the moment of the strike.
-    const target = orbitPoint(transport.angle(s.time)).applyQuaternion(inv);
-    const dir = target.sub(p.rest).normalize();
+    let dir = s.dir;
+    if (!dir) {
+      // Toward the indicator, where it was at the moment of the strike.
+      const target = orbitPoint(transport.angle(s.time)).applyQuaternion(inv);
+      dir = pushDir(s.i, target.sub(p.rest).normalize());
+    }
     const arm = new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).multiplyScalar(p.scale * 0.5);
     strike(s.i, dir, arm, s.energy, s.time);
   }
@@ -271,26 +312,82 @@ const raycaster = new THREE.Raycaster();
 const pointer = { x: 0, y: 0, lastX: 0, lastY: 0, lastT: 0, speed: 0, down: false, dragged: false };
 const spin = { vel: new THREE.Vector3(), auto: new THREE.Vector3(0.06, 0.22, 0) };
 
-function touchAt(clientX, clientY) {
-  if (!world) return;
+// The touch zone, drawn as a faint circle facing the camera wherever the pointer meets the block.
+const cursor = (() => {
+  const pts = [];
+  for (let i = 0; i < 64; i++) pts.push(new THREE.Vector3(Math.cos((i / 64) * Math.PI * 2), Math.sin((i / 64) * Math.PI * 2), 0));
+  const line = new THREE.LineLoop(
+    new THREE.BufferGeometry().setFromPoints(pts),
+    new THREE.LineBasicMaterial({ color: INK, transparent: true, opacity: 0.45, depthTest: false }),
+  );
+  line.renderOrder = 10;
+  line.visible = false;
+  scene.add(line);
+  return line;
+})();
+
+function hover(clientX, clientY) {
+  if (!world) return null;
   const ndc = new THREE.Vector2((clientX / window.innerWidth) * 2 - 1, -(clientY / window.innerHeight) * 2 + 1);
   raycaster.setFromCamera(ndc, camera);
   const hit = raycaster.intersectObject(world.cubes.mesh, false)[0];
-  if (!hit || hit.instanceId === undefined) return;
-  const i = hit.instanceId;
-  const t = now();
-  if (t - world.lastTouch[i] < TOUCH_COOLDOWN) return;
-  world.lastTouch[i] = t;
+  cursor.visible = !!hit;
+  if (hit) {
+    cursor.position.copy(hit.point);
+    cursor.quaternion.copy(camera.quaternion);
+    cursor.scale.setScalar(Math.max(0.35, ZONE_RADIUS[state.zone]));
+  }
+  return hit && hit.instanceId !== undefined ? hit : null;
+}
 
-  const energy = Math.min(1, 0.55 + pointer.speed / 2500);
+/*
+  A touch strikes every cube within the zone around the point of contact: full strength at the
+  centre, fading toward the edge, each one a little later the further out it is (30 ms per
+  unit) — so a wide touch lands as a quick ripple, not a slab. Only the nearest few sound.
+*/
+function touchAt(clientX, clientY) {
+  const hit = hover(clientX, clientY);
+  if (!hit) return;
+  const t = now();
+  const radius = ZONE_RADIUS[state.zone];
   const inv = tmpQ.copy(cluster.getWorldQuaternion(new THREE.Quaternion())).invert();
-  const dir = raycaster.ray.direction.clone().applyQuaternion(inv);
-  const local = cluster.worldToLocal(hit.point.clone());
-  const arm = local.sub(world.pieces[i].rest);
-  strike(i, dir, arm, energy, t);
-  if (audioReady()) {
-    const absStep = Math.floor(transport.playing ? transport.position(t) : t / transport.stepSec());
-    soundPiece(i, t + 0.01, absStep, energy);
+  const ray = raycaster.ray.direction.clone().applyQuaternion(inv);
+  const contact = cluster.worldToLocal(hit.point.clone());
+  const base = Math.min(1, 0.6 + pointer.speed / 2500);
+  const { pieces, physics, lastTouch } = world;
+
+  const touched = [];
+  if (radius === 0) touched.push({ i: hit.instanceId, d: 0 });
+  else
+    for (let i = 0; i < pieces.length; i++) {
+      const o = i * 3;
+      const d = Math.max(0, Math.hypot(
+        pieces[i].rest.x + physics.u[o] - contact.x,
+        pieces[i].rest.y + physics.u[o + 1] - contact.y,
+        pieces[i].rest.z + physics.u[o + 2] - contact.z,
+      ) - pieces[i].scale / 2);
+      if (d <= radius) touched.push({ i, d });
+    }
+  touched.sort((a, b) => a.d - b.d);
+
+  const absStep = Math.floor(transport.playing ? transport.position(t) : t / transport.stepSec());
+  const heard = new Set();
+  for (const { i, d } of touched) {
+    if (t - lastTouch[i] < TOUCH_COOLDOWN) continue;
+    lastTouch[i] = t;
+    const energy = radius === 0 ? base : base * Math.pow(1 - d / (radius + 0.5), 0.7);
+    const delay = d * 0.03;
+    const dir = pushDir(i, ray);
+    if (delay < 0.004) {
+      const arm = contact.clone().sub(pieces[i].rest).clampLength(0, pieces[i].scale / 2);
+      strike(i, dir, arm, energy, t);
+    } else pending.push({ time: t + delay, i, energy, gen: world, dir });
+    if (!audioReady()) continue;
+    const midi = noteFor(pieces[i].voice, pieces[i], absStep);
+    const k = `${pieces[i].voice.id}:${midi}`;
+    if (heard.has(k) || heard.size >= MAX_VOICES_PER_TOUCH) continue;
+    heard.add(k);
+    soundPiece(i, t + 0.01 + delay, absStep, energy);
   }
 }
 
@@ -319,6 +416,7 @@ canvas.addEventListener('pointermove', (e) => {
   pointer.lastT = t;
   if (pointer.down) {
     if (Math.abs(dx) + Math.abs(dy) > 0) pointer.dragged = true;
+    cursor.visible = false;
     if (state.mode === 'touch') {
       // Drag spins the block about the camera's up and right axes; release keeps the momentum.
       spin.vel.x = dy * 0.25;
@@ -336,6 +434,7 @@ const release = () => {
 };
 canvas.addEventListener('pointerup', release);
 canvas.addEventListener('pointercancel', () => (pointer.down = false));
+canvas.addEventListener('pointerleave', () => (cursor.visible = false));
 
 // ---- Actions and UI -------------------------------------------------------------------------
 
@@ -382,6 +481,16 @@ const act = {
   },
   setGrain(g) {
     state.grain = g;
+    syncUrl();
+    refreshUi();
+  },
+  set(key, value) {
+    state[key] = value;
+    if (key === 'caves') {
+      pending.length = 0;
+      build(state.seed);
+    }
+    applyTuning();
     syncUrl();
     refreshUi();
   },
@@ -447,7 +556,7 @@ function frame(stamp) {
     for (let i = 0; i < heat.length; i++) {
       heat[i] *= decay;
       // Cubes the wave is passing through warm up with their displacement — the light travels too.
-      glow[i] = Math.min(1, heat[i] + Math.max(0, physics.offset(i) - 0.04) * 0.45);
+      glow[i] = Math.min(1, heat[i] + Math.min(0.3, Math.max(0, physics.offset(i) - 0.05) * 0.2));
     }
     world.cubes.update(world.pieces, physics, glow);
   }
@@ -460,6 +569,7 @@ function frame(stamp) {
 }
 
 build(state.seed);
+applyTuning();
 controls.enabled = state.mode === 'orbit';
 ring.visible = trail.visible = indicator.visible = state.mode === 'orbit';
 syncUrl();

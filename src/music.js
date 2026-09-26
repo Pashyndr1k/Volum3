@@ -93,21 +93,36 @@ function accent(step) {
   moment — the reverse of SQNCR, which picks a time for each voice. Downbeats get the low end,
   backbeats the snare family, offbeats the ticks, and big cubes the heavy, pitched parts. Height
   leans the choice: low in the block is bass and kick, high is bells and hats.
+
+  A lattice lines its cubes up along a few directions, so several often share a step. Only the
+  lead cube of a step (biggest, then lowest) takes the beat role, the next one doubles it (sub
+  under a kick, clap or rim on a snare), and the rest become tuned and colour voices — so a
+  crowded step plays as a chord over a kick, not ten kicks.
 */
 export function assignVoices(pieces, stepsPerOrbit, seed, variation = 0.3) {
   const rand = mulberry32(seed ^ 0x9e37);
   const pick = (list) => list[Math.floor(rand() * list.length)];
+  const byStep = new Map();
+  for (const p of pieces) {
+    if (!byStep.has(p.step)) byStep.set(p.step, []);
+    byStep.get(p.step).push(p);
+  }
+  for (const group of byStep.values()) group.sort((a, b) => b.size - a.size || a.height - b.height);
+
   for (const p of pieces) {
     const s = p.step;
+    const rank = byStep.get(s).indexOf(p);
     const low = p.height < 0.35;
     const high = p.height > 0.7;
     let id;
-    if (s % 8 === 0) id = p.size >= 4 ? 'sub' : p.size === 2 || low ? 'kick' : pick(['kick', 'tom']);
-    else if (s % 8 === 4) id = p.size === 1 ? pick(['clap', 'snare', 'rim']) : 'snare';
+    if (s % 8 === 0 && rank === 0) id = 'kick';
+    else if (s % 8 === 0 && rank === 1 && p.size >= 2) id = 'sub';
+    else if (s % 8 === 4 && rank === 0) id = p.size === 1 ? pick(['clap', 'snare']) : 'snare';
+    else if (s % 8 === 4 && rank === 1) id = pick(['clap', 'rim']);
     else if (p.size >= 4) id = low ? 'bass' : pick(['chord', 'bass', 'sub']);
     else if (p.size === 2) id = low ? pick(['bass', 'tom']) : high ? pick(['chord', 'bell']) : pick(['chord', 'conga', 'bass', 'tom']);
     else if (s % 2 === 1) id = high ? pick(['hat', 'shaker']) : pick(['hat', 'shaker', 'rim', 'conga']);
-    else id = high ? pick(['bell', 'zap', 'ohat']) : pick(['ohat', 'cowbell', 'zap', 'bell', 'noise']);
+    else id = high ? pick(['bell', 'zap', 'ohat']) : pick(['ohat', 'cowbell', 'zap', 'bell', 'noise', 'hat']);
 
     const v = VOICE.get(id);
     p.voice = v;

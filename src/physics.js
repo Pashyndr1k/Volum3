@@ -6,10 +6,11 @@
   timers. Mass is volume, so the big blocks lag and the small ones rattle.
 
   State is displacement from rest, in the cluster's own frame. Semi-implicit Euler at a fixed
-  240 Hz, which is stable here by a wide margin (ω·dt ≈ 0.1 for the stiffest cube).
+  240 Hz. Touching cubes also push apart if they overlap, so a cube thrown out of the core
+  shoves the wall aside instead of passing through it.
 
-  Tuned by measurement (see docs/PROTOTYPE.md): a full-energy hit moves a small cube ~0.4 units,
-  its neighbours ~15 % of that, the front travels ~40 ms per unit, and it settles within ~1 s.
+  Tuned by measurement (see docs/PROTOTYPE.md). FORCE, SPIN and RETURN on the panel scale the
+  impulse, the random spin kick and the anchor springs.
 */
 
 export const DT = 1 / 240;
@@ -21,9 +22,14 @@ export const TUNING = {
   neighbourDamping: 0.04,
   spin: 400, // angular stiffness, as ω² for the cube's own inertia
   spinDamping: 0.3,
-  impulse: 14, // m/s given to a unit cube at energy 1
-  twist: 0.3, // share of an off-centre hit that turns into spin; enough to read as a knock, not a tumble
-  maxOffset: 1.2,
+  impulse: 14, // m/s given to a unit cube at energy 1, before FORCE
+  twist: 0.15, // share of an off-centre hit that turns into spin
+  contact: 15000, // push-apart stiffness when two touching cubes overlap, per unit of the lighter mass
+  maxOffset: 6,
+  // Set from the panel.
+  force: 3.5, // FORCE: multiplies the impulse
+  spinKick: 6, // SPIN: extra angular velocity (rad/s) about a random axis on every hit
+  looseness: 1, // RETURN: multiplies anchor stiffness — low floats far and comes back slowly
 };
 
 export class ClusterPhysics {
@@ -49,13 +55,28 @@ export class ClusterPhysics {
       degree[b]++;
     }
     this.share = edges.map(([a, b]) => 2 / (degree[a] + degree[b]));
+    this.sizes = pieces.map((p) => p.size);
+    this.rest = new Float32Array(n * 3);
+    this.half = new Float32Array(n);
+    pieces.forEach((p, i) => {
+      this.rest.set([p.rest.x, p.rest.y, p.rest.z], i * 3);
+      this.half[i] = p.scale / 2;
+    });
     pieces.forEach((p, i) => {
       const m = p.size ** 3;
       this.mass[i] = m;
-      this.kA[i] = TUNING.anchor * Math.pow(m, 0.75);
-      this.cA[i] = 2 * TUNING.anchorDamping * Math.sqrt(this.kA[i] * m);
       this.inertia[i] = (m * p.size * p.size) / 6;
     });
+    this.retune();
+  }
+
+  // Recompute the anchor springs after RETURN changes.
+  retune() {
+    for (let i = 0; i < this.n; i++) {
+      const m = this.mass[i];
+      this.kA[i] = TUNING.anchor * TUNING.looseness * Math.pow(m, 0.75);
+      this.cA[i] = 2 * TUNING.anchorDamping * Math.sqrt(this.kA[i] * m);
+    }
   }
 
   /**
@@ -64,7 +85,7 @@ export class ClusterPhysics {
    */
   strike(i, dir, arm, energy) {
     const m = this.mass[i];
-    const j = TUNING.impulse * energy * Math.pow(m, 0.75);
+    const j = TUNING.impulse * TUNING.force * energy * Math.pow(m, 0.75);
     const o = i * 3;
     this.v[o] += (dir[0] * j) / m;
     this.v[o + 1] += (dir[1] * j) / m;
@@ -74,6 +95,15 @@ export class ClusterPhysics {
     this.w[o] += ((arm[1] * dir[2] - arm[2] * dir[1]) * j) / I;
     this.w[o + 1] += ((arm[2] * dir[0] - arm[0] * dir[2]) * j) / I;
     this.w[o + 2] += ((arm[0] * dir[1] - arm[1] * dir[0]) * j) / I;
+    // A kick about a random axis, so a struck cube turns in space as it flies; big ones turn less.
+    if (TUNING.spinKick > 0) {
+      let x = Math.random() - 0.5, y = Math.random() - 0.5, z = Math.random() - 0.5;
+      const l = Math.hypot(x, y, z) || 1;
+      const kick = (TUNING.spinKick * energy) / Math.sqrt(this.sizes[i]) / l;
+      this.w[o] += x * kick;
+      this.w[o + 1] += y * kick;
+      this.w[o + 2] += z * kick;
+    }
   }
 
   advance(dt) {
@@ -100,6 +130,31 @@ export class ClusterPhysics {
         f[oa + k] += force;
         f[ob + k] -= force;
       }
+      // Contact: if the two boxes now overlap, push them apart along the axis of least overlap.
+      // Cheap, axis-aligned, and only between cubes that touch at rest — enough to stop an inner
+      // cube flying out straight through the wall around it.
+      const reach = this.half[a] + this.half[b];
+      let axis = -1;
+      let least = Infinity;
+      let sign = 1;
+      for (let k = 0; k < 3; k++) {
+        const d = this.rest[ob + k] + u[ob + k] - this.rest[oa + k] - u[oa + k];
+        const overlap = reach - Math.abs(d);
+        if (overlap <= 0) {
+          axis = -1;
+          break;
+        }
+        if (overlap < least) {
+          least = overlap;
+          axis = k;
+          sign = d >= 0 ? 1 : -1;
+        }
+      }
+      if (axis >= 0) {
+        const push = TUNING.contact * Math.min(mass[a], mass[b]) * least;
+        f[oa + axis] -= sign * push;
+        f[ob + axis] += sign * push;
+      }
     }
     const lim = TUNING.maxOffset;
     for (let i = 0; i < n; i++) {
@@ -109,10 +164,12 @@ export class ClusterPhysics {
       const cR = 2 * TUNING.spinDamping * Math.sqrt(kR * inertia[i]);
       for (let k = 0; k < 3; k++) {
         v[o + k] += (f[o + k] / m) * dt;
-        u[o + k] = Math.max(-lim, Math.min(lim, u[o + k] + v[o + k] * dt));
+        u[o + k] += v[o + k] * dt;
         w[o + k] += ((-kR * th[o + k] - cR * w[o + k]) / inertia[i]) * dt;
         th[o + k] += w[o + k] * dt;
       }
+      const d = Math.hypot(u[o], u[o + 1], u[o + 2]);
+      if (d > lim) for (let k = 0; k < 3; k++) u[o + k] *= lim / d;
     }
   }
 
