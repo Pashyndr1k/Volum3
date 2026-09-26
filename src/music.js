@@ -18,12 +18,21 @@ export const VOICES = [
   { id: 'chord', group: 'tuned', pitched: true, baseMidi: 64, decay: 0.7, gain: 0.4, reverb: 0.3, delay: 0.12 },
   { id: 'zap', group: 'tuned', pitched: true, baseMidi: 72, decay: 0.18, gain: 0.42, reverb: 0.14, delay: 0.26 },
   { id: 'bell', group: 'tuned', pitched: true, baseMidi: 79, decay: 1.1, gain: 0.42, reverb: 0.34, delay: 0.22 },
+  // Not in SQNCR: a sustained voice that holds for the note's length, for hummed melodies.
+  { id: 'lead', group: 'tuned', pitched: true, baseMidi: 72, decay: 0.3, gain: 0.5, reverb: 0.26, delay: 0.16 },
 ];
 export const VOICE = new Map(VOICES.map((v, i) => [v.id, { ...v, index: i }]));
 
-// CITY, as the example URL plays it: F major, the royal-road family, seventh voicing.
+// The current harmony. Starts as CITY (F major, the royal-road family); patterns replace it.
 export const KEY = { root: 5, steps: [0, 2, 4, 5, 7, 9, 11] };
 const PROGRESSION = [0, 3, 4, 2, 5, 3, 1, 4];
+
+export function setHarmony(root, steps, progression) {
+  KEY.root = root;
+  KEY.steps = steps;
+  PROGRESSION.length = 0;
+  PROGRESSION.push(...progression);
+}
 export const STEPS_PER_BAR = 16;
 
 export function degreeToMidi(base, degree) {

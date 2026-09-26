@@ -49,7 +49,7 @@ body {
 #hint {
   position: fixed;
   left: 24px;
-  bottom: 20px;
+  top: 84px;
   font-size: 12px;
   letter-spacing: 0.08em;
   color: var(--dim);
@@ -60,5 +60,36 @@ body {
 @media (max-width: 640px) {
   #panel { font-size: 12px; gap: 6px; left: 16px; top: 16px; }
   #panel .row { gap: 6px 16px; }
-  #hint { left: 16px; bottom: 16px; font-size: 10px; }
+  #hint { left: 16px; top: 76px; font-size: 10px; }
+  #timeline { left: 8px; right: 8px; bottom: 8px; }
 }
+
+/*
+  The timeline sits in its own frame along the bottom: a hairline box on near-black, the same
+  words-as-controls header as the panel, and a canvas drawn every frame.
+*/
+#timeline {
+  position: fixed;
+  left: 24px;
+  right: 24px;
+  bottom: 20px;
+  padding: 10px 12px 12px;
+  background: rgba(6, 6, 6, 0.88);
+  border: 1px solid var(--faint);
+  font-size: 12px;
+  line-height: 18px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+#timeline[hidden] { display: none; }
+#timeline .tl-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 20px; margin-bottom: 8px; }
+#timeline .group { display: inline-flex; flex-wrap: wrap; gap: 4px 12px; }
+#timeline .brand { color: var(--ink); font-weight: 500; }
+#timeline .name { color: var(--dim); }
+#timeline .word { cursor: pointer; white-space: nowrap; }
+#timeline .word:hover { color: var(--accent); }
+#timeline .word.on { color: var(--ink); }
+#timeline .word.off { color: #55534c; }
+#timeline .word.rec, #timeline .status.rec { color: var(--accent); }
+#timeline .status { color: var(--dim); margin-left: auto; }
+#timeline .tl-canvas { display: block; width: 100%; cursor: pointer; }

@@ -6,13 +6,17 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 
 import { generateCluster } from './cluster.js';
-import { assignVoices, noteFor, chordAt, chordSpread } from './music.js';
+import { assignVoices, noteFor, chordAt, chordSpread, setHarmony, VOICE } from './music.js';
+import { presetPattern, generatePattern, SCALES, STYLE } from './patterns.js';
+import { mapPattern } from './mapper.js';
+import { Timeline } from './timeline.js';
+import { openMic, analyzeHum, humToEvents } from './hum.js';
 import { pairFor, INK } from './palette.js';
 import { ClusterPhysics, TUNING } from './physics.js';
 import { Cubes } from './cubes.js';
 import { Emissions } from './emissions.js';
 import { Transport } from './transport.js';
-import { unlock, audioReady, play, now } from './audio.js';
+import { unlock, audioReady, play, now, ctx as audioCtx } from './audio.js';
 import { randomSeed } from './rng.js';
 import { renderPanel, renderHint } from './ui.js';
 
@@ -29,7 +33,8 @@ const ORBIT_RADIUS = 7.6;
 const ORBIT_TILT = new THREE.Quaternion().setFromEuler(new THREE.Euler(0.22, 0, 0.1));
 const HEAT_TAU = 0.3; // seconds; a struck cube is back to its colour in about 4–6 steps
 const TOUCH_COOLDOWN = 0.15;
-const MAX_VOICES_PER_STEP = 5;
+const GHOST = 0.14; // how hard the indicator brushes a cube that has no note this orbit
+const IDLE_COLOR = '#2b2a27'; // cubes without a note go dark, so the block shows the pattern
 const MAX_VOICES_PER_TOUCH = 4;
 
 // Panel levels → physical values. Level 0/1 is the first entry.
@@ -49,14 +54,32 @@ const state = {
   spin: intParam('spin', 0, 4, 2),
   ret: intParam('return', 1, 5, 3),
   caves: intParam('caves', 1, 3, 2),
+  timeline: params.get('timeline') !== '0',
   playing: false,
   unlocked: false,
 };
 
+// The pattern: the preset, or a generated one if the URL names a style and pattern seed.
+let pattern = (() => {
+  const style = params.get('style');
+  const seed = intParam('pattern', 1, 2147483647, 0);
+  const p = style && STYLE.has(style) && seed ? generatePattern(style, seed) : presetPattern();
+  p.naturalBpm = p.bpm;
+  if (params.has('bpm')) p.bpm = state.bpm;
+  return p;
+})();
+state.bpm = pattern.bpm;
+setHarmony(pattern.root, SCALES[pattern.scale], pattern.progression);
+
 function syncUrl() {
   const q = new URLSearchParams({ seed: String(state.seed) });
   if (state.mode !== 'orbit') q.set('mode', state.mode);
-  if (state.bpm !== 100) q.set('bpm', String(state.bpm));
+  if (pattern.seed) {
+    q.set('style', pattern.style);
+    q.set('pattern', String(pattern.seed));
+  }
+  if (state.bpm !== pattern.naturalBpm) q.set('bpm', String(state.bpm));
+  if (!state.timeline) q.set('timeline', '0');
   if (state.grain !== 3) q.set('grain', String(state.grain));
   if (state.zone !== 1) q.set('zone', String(state.zone));
   if (state.force !== 3) q.set('force', String(state.force));
@@ -183,8 +206,10 @@ function build(seed) {
   emissions.clear();
   const { pieces, edges } = generateCluster(seed, state.caves);
   for (const p of pieces) p.step = stepOf(p.rest);
+  // A fallback voice per cube, for touching cubes that carry no note of the pattern.
   assignVoices(pieces, STEPS, seed);
-  for (const p of pieces) p.color = pairFor(p.voice.index).bg;
+  const mapping = mapPattern(pattern, pieces, STEPS);
+  pieces.forEach((p, i) => (p.color = colorOf(mapping, i)));
 
   const physics = new ClusterPhysics(pieces, edges);
   // Arrive assembling: every cube starts pushed outward and the springs pull the block together.
@@ -201,6 +226,8 @@ function build(seed) {
     physics,
     cubes,
     buckets,
+    mapping,
+    idleByStep: idleBuckets(pieces, mapping),
     heat: new Float32Array(pieces.length),
     glow: new Float32Array(pieces.length),
     lastTouch: new Float64Array(pieces.length).fill(-1),
@@ -208,6 +235,37 @@ function build(seed) {
   cubes.update(pieces, physics, world.glow);
   cubes.mesh.computeBoundingSphere();
   cubes.mesh.boundingSphere.radius += TUNING.maxOffset; // cubes fly; keep raycasts from being culled early
+}
+
+// A cube takes the colour of the first part it plays; a cube with nothing to play goes dark.
+function colorOf(mapping, i) {
+  const ev = mapping.cubeEvents[i][0];
+  return ev ? pairFor(VOICE.get(pattern.voices[ev.lane]).index).bg : IDLE_COLOR;
+}
+
+function idleBuckets(pieces, mapping) {
+  const out = Array.from({ length: STEPS }, () => []);
+  for (const i of mapping.idle) out[pieces[i].step].push(i);
+  return out;
+}
+
+// Hand the current pattern to the cubes again, after it changed.
+function remap() {
+  world.mapping = mapPattern(pattern, world.pieces, STEPS);
+  world.idleByStep = idleBuckets(world.pieces, world.mapping);
+  world.cubes.setColors(world.pieces.map((_, i) => colorOf(world.mapping, i)));
+}
+
+function setPattern(p) {
+  pattern = p;
+  setHarmony(p.root, SCALES[p.scale], p.progression);
+  state.bpm = p.bpm;
+  transport.setBpm(p.bpm);
+  transport.swing = p.swing;
+  if (world) remap();
+  timeline.setPattern(p);
+  syncUrl();
+  refreshUi();
 }
 
 function applyTuning() {
@@ -245,12 +303,22 @@ function panOf(i) {
   return Math.max(-0.6, Math.min(0.6, (tmpV.dot(camRight) / 6) * 0.6));
 }
 
-function soundPiece(i, at, absStep, velocity) {
+// What a cube sounds like when touched: its first note in the pattern, or its fallback voice.
+function noteOf(i, absStep) {
+  const ev = world.mapping.cubeEvents[i][0];
+  if (ev) return { voice: VOICE.get(pattern.voices[ev.lane]), midi: ev.midi, spread: ev.spread, len: ev.len ?? 1 };
   const p = world.pieces[i];
-  const v = p.voice;
-  const midi = noteFor(v, p, absStep);
-  const spread = v.id === 'chord' ? chordSpread(chordAt(absStep)) : undefined;
-  play(v, { at, velocity, pan: panOf(i), midi, spread });
+  return {
+    voice: p.voice,
+    midi: noteFor(p.voice, p, absStep),
+    spread: p.voice.id === 'chord' ? chordSpread(chordAt(absStep)) : undefined,
+    len: 1,
+  };
+}
+
+function soundPiece(i, at, absStep, velocity) {
+  const n = noteOf(i, absStep);
+  play(n.voice, { at, velocity, pan: panOf(i), midi: n.midi, spread: n.spread, dur: n.len * transport.stepSec() });
 }
 
 // Apply a strike now: impulse, heat, and the emission throw. `dir` is in the cluster's frame.
@@ -265,24 +333,23 @@ function strike(i, dir, arm, energy, t) {
 }
 
 // Called by the transport for every step, ahead of time. Sound is booked now; the picture waits.
+// Each note of the pattern at this step strikes its cube; cubes with no note get a light brush.
 function onStep(absStep, time) {
   if (!world || state.mode !== 'orbit') return;
   const s = absStep % STEPS;
-  const orbit = Math.floor(absStep / STEPS);
+  const sec = transport.stepSec();
   const heard = new Set();
-  const members = world.buckets[s];
-  const share = 1 / Math.sqrt(Math.max(1, members.length));
-  for (const i of members) {
-    const p = world.pieces[i];
-    const sounding = (p.mask & (1 << orbit % 4)) !== 0;
-    pending.push({ time, i, energy: sounding ? Math.min(1, p.velocity * 1.15) : 0.3, gen: world });
-    if (!sounding) continue;
-    const midi = noteFor(p.voice, p, absStep);
-    const k = `${p.voice.id}:${midi}`;
-    if (heard.has(k) || heard.size >= MAX_VOICES_PER_STEP) continue;
-    heard.add(k);
-    soundPiece(i, time, absStep, p.velocity * (0.7 + 0.3 * share));
+  for (const { event, cube } of world.mapping.byStep[s]) {
+    const silent = timeline.muted.has(event.lane) || (hum.active && event.lane === 'melody');
+    pending.push({ time, i: cube, energy: silent ? GHOST : Math.min(1, (event.vel ?? 0.8) * 1.1), gen: world });
+    if (silent) continue;
+    const voice = VOICE.get(pattern.voices[event.lane]);
+    const key = `${voice.id}:${event.midi}`;
+    if (heard.has(key)) continue;
+    heard.add(key);
+    play(voice, { at: time, velocity: event.vel ?? 0.8, pan: panOf(cube), midi: event.midi, spread: event.spread, dur: (event.len ?? 1) * sec * 0.95 });
   }
+  for (const i of world.idleByStep[s]) pending.push({ time, i, energy: GHOST, gen: world });
 }
 
 function applyPending(t) {
@@ -304,7 +371,7 @@ function applyPending(t) {
   }
 }
 
-const transport = new Transport({ bpm: state.bpm, steps: STEPS, swing: 0.11, onStep });
+const transport = new Transport({ bpm: state.bpm, steps: STEPS, swing: pattern.swing, onStep });
 
 // ---- Touch ----------------------------------------------------------------------------------
 
@@ -383,8 +450,8 @@ function touchAt(clientX, clientY) {
       strike(i, dir, arm, energy, t);
     } else pending.push({ time: t + delay, i, energy, gen: world, dir });
     if (!audioReady()) continue;
-    const midi = noteFor(pieces[i].voice, pieces[i], absStep);
-    const k = `${pieces[i].voice.id}:${midi}`;
+    const n = noteOf(i, absStep);
+    const k = `${n.voice.id}:${n.midi}`;
     if (heard.has(k) || heard.size >= MAX_VOICES_PER_TOUCH) continue;
     heard.add(k);
     soundPiece(i, t + 0.01 + delay, absStep, energy);
@@ -474,10 +541,36 @@ const act = {
     refreshUi();
   },
   setBpm(bpm) {
-    state.bpm = bpm;
-    transport.setBpm(bpm);
+    state.bpm = Math.max(50, Math.min(180, bpm));
+    pattern.bpm = state.bpm;
+    transport.setBpm(state.bpm);
+    timeline.setPattern(pattern);
     syncUrl();
     refreshUi();
+  },
+  randomPattern(styleId = pattern.style) {
+    const p = generatePattern(styleId, randomSeed());
+    p.naturalBpm = p.bpm;
+    setPattern(p);
+    timeline.setStatus('');
+  },
+  presetPattern() {
+    const p = presetPattern();
+    p.naturalBpm = p.bpm;
+    setPattern(p);
+    timeline.setStatus('');
+  },
+  toggleTimeline() {
+    state.timeline = !state.timeline;
+    timelineEl.hidden = !state.timeline;
+    timeline.resize();
+    frameView();
+    syncUrl();
+    refreshUi();
+  },
+  hum() {
+    if (hum.active) stopHum('CANCELLED');
+    else startHum();
   },
   setGrain(g) {
     state.grain = g;
@@ -507,14 +600,120 @@ window.addEventListener('keydown', (e) => {
     act.togglePlay();
   } else if (e.key === 't' || e.key === 'T') act.setMode(state.mode === 'orbit' ? 'touch' : 'orbit');
   else if (e.key === 'g' || e.key === 'G') act.generate();
+  else if (e.key === 'r' || e.key === 'R') act.randomPattern();
+  else if (e.key === 'l' || e.key === 'L') act.toggleTimeline();
+  else if (e.key === 'h' || e.key === 'H') act.hum();
+  else if (e.key === 'Escape' && hum.active) stopHum('CANCELLED');
 });
 
-window.addEventListener('resize', () => {
-  camera.aspect = window.innerWidth / window.innerHeight;
+// Keep the block centred in the space above the timeline: shift the view, not the camera.
+function frameView() {
+  const w = window.innerWidth;
+  const h = window.innerHeight;
+  camera.aspect = w / h;
+  camera.setViewOffset(w, h, 0, state.timeline ? timeline.height / 2 : 0, w, h);
   camera.updateProjectionMatrix();
+}
+
+window.addEventListener('resize', () => {
   renderer.setSize(window.innerWidth, window.innerHeight);
   composer.setSize(window.innerWidth, window.innerHeight);
+  frameView();
 });
+
+// ---- Timeline and humming -------------------------------------------------------------------
+
+const timelineEl = document.getElementById('timeline');
+timelineEl.hidden = !state.timeline;
+const timeline = new Timeline(timelineEl, {
+  onStyle: (id) => act.randomPattern(id),
+  onRandom: () => act.randomPattern(),
+  onPreset: () => act.presetPattern(),
+  onHum: () => act.hum(),
+  onMute: () => {},
+  onEdit: (p) => setPattern(p),
+});
+
+/*
+  Humming: open the microphone, count one bar in on the rim, then play the pattern with its
+  melody silenced as a guide while four bars are recorded. When the window closes, the take is
+  analysed and becomes the melody lane — played by the sustained LEAD voice — and the cubes are
+  re-dealt to its notes. The guide keeps going, so the result plays straight away.
+*/
+const hum = { active: false, mic: null, t0: 0, dur: 0, countAt: 0, timer: 0, shown: '' };
+
+async function startHum() {
+  if (!state.unlocked) {
+    await unlock();
+    state.unlocked = true;
+  }
+  if (state.mode !== 'orbit') act.setMode('orbit');
+  transport.stop();
+  pending.length = 0;
+  timeline.setStatus('ALLOW THE MICROPHONE');
+  try {
+    hum.mic = await openMic(audioCtx());
+  } catch (err) {
+    timeline.setStatus(`NO MICROPHONE · ${String(err.message || err).toUpperCase()}`);
+    return;
+  }
+  const c = audioCtx();
+  const beat = 60 / pattern.bpm;
+  hum.countAt = c.currentTime + 0.4;
+  for (let k = 0; k < 4; k++) play(VOICE.get('rim'), { at: hum.countAt + k * beat, velocity: k === 0 ? 1 : 0.7 });
+  hum.t0 = hum.countAt + 4 * beat;
+  hum.dur = STEPS * transport.stepSec();
+  hum.active = true;
+  hum.shown = '';
+  timeline.rec = { phase: 'count', count: 4, level: 0 };
+  transport.startAt(hum.t0);
+  state.playing = true;
+  refreshUi();
+  hum.timer = setTimeout(finishHum, (hum.t0 + hum.dur - c.currentTime + 0.25) * 1000);
+}
+
+function stopHum(message) {
+  clearTimeout(hum.timer);
+  hum.mic?.close();
+  hum.mic = null;
+  hum.active = false;
+  timeline.rec = null;
+  timeline.setStatus(message);
+}
+
+function finishHum() {
+  if (!hum.active) return;
+  const samples = hum.mic.take(hum.t0, hum.t0 + hum.dur);
+  const sampleRate = audioCtx().sampleRate;
+  stopHum('ANALYSING');
+  const notes = analyzeHum(samples, sampleRate);
+  const melody = humToEvents(notes, pattern, transport.stepSec(), STEPS);
+  if (melody.length === 0) {
+    timeline.setStatus('HEARD NOTHING · HUM LOUDER, CLOSER TO THE MIC');
+    return;
+  }
+  setPattern({
+    ...pattern,
+    name: 'HUMMED',
+    voices: { ...pattern.voices, melody: 'lead' },
+    events: [...pattern.events.filter((e) => e.lane !== 'melody'), ...melody],
+  });
+  timeline.setStatus(`HEARD ${melody.length} NOTES`);
+}
+
+function updateHum(t) {
+  if (!hum.active) return;
+  const beat = 60 / pattern.bpm;
+  const counting = t < hum.t0;
+  const count = Math.max(1, Math.min(4, 4 - Math.floor((t - hum.countAt) / beat)));
+  const bar = Math.min(4, 1 + Math.floor((t - hum.t0) / (beat * 4)));
+  timeline.rec = { phase: counting ? 'count' : 'rec', count, level: hum.mic ? hum.mic.level() : 0 };
+  const text = counting ? 'COUNT-IN' : `LISTENING · BAR ${bar} OF 4 · ESC TO CANCEL`;
+  if (text !== hum.shown) {
+    hum.shown = text;
+    timeline.setStatus(text);
+  }
+}
 
 // ---- Frame loop -----------------------------------------------------------------------------
 
@@ -562,12 +761,16 @@ function frame(stamp) {
   }
   emissions.update(t);
   placeIndicator(transport.angle(t));
+  updateHum(t);
+  if (state.timeline) timeline.draw(Math.max(0, transport.position(t)), transport.playing);
 
   if (state.mode === 'orbit') controls.update();
   composer.render();
   requestAnimationFrame(frame);
 }
 
+timeline.setPattern(pattern);
+frameView();
 build(state.seed);
 applyTuning();
 controls.enabled = state.mode === 'orbit';
@@ -577,4 +780,4 @@ refreshUi();
 requestAnimationFrame(frame);
 
 // For poking at it from the console.
-window.volum3 = { state, act, transport, get world() { return world; } };
+window.volum3 = { state, act, transport, timeline, get world() { return world; }, get pattern() { return pattern; } };

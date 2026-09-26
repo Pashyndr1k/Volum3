@@ -3,8 +3,6 @@
   one lit. Rebuilt from state on every change — there are a dozen elements, it costs nothing.
 */
 
-const BPMS = [60, 80, 100, 120, 140];
-
 export function renderPanel(el, state, act) {
   el.innerHTML = '';
   let row = null;
@@ -46,9 +44,14 @@ export function renderPanel(el, state, act) {
     { text: 'TOUCH', on: state.mode === 'touch', onClick: () => act.setMode('touch') },
   ]);
   ctl(null, [{ text: 'GENERATE', onClick: act.generate }]);
-  ctl('BPM', BPMS.map((b) => ({ text: String(b), on: state.bpm === b, onClick: () => act.setBpm(b) })));
+  ctl('BPM', [
+    { text: '−', onClick: () => act.setBpm(state.bpm - 2) },
+    { text: String(state.bpm), on: true },
+    { text: '+', onClick: () => act.setBpm(state.bpm + 2) },
+  ]);
   ctl('EMISSION', [1, 2, 3, 4, 5].map((g) => ({ text: String(g), on: state.grain === g, onClick: () => act.setGrain(g) })));
   ctl('SEED', [{ text: state.seed.toString(36).toUpperCase(), on: true }]);
+  ctl(null, [{ text: 'TIMELINE', on: state.timeline, onClick: act.toggleTimeline }]);
 
   newRow();
   ctl('ZONE', levels('zone', 0, 4), 'How wide a touch reaches. 0 = just the cube under the pointer');
@@ -62,7 +65,7 @@ export function renderHint(el, state, count) {
   const sound = state.unlocked ? '' : 'CLICK FOR SOUND · ';
   const how =
     state.mode === 'orbit'
-      ? 'SPACE PLAY · T TOUCH MODE · G GENERATE · HOVER A CUBE TO TOUCH IT · DRAG TO LOOK AROUND'
-      : 'HOVER TO TOUCH · DRAG TO SPIN · T ORBIT MODE · G GENERATE';
+      ? 'SPACE PLAY · R NEW RHYTHM · H HUM A MELODY · L TIMELINE · T TOUCH MODE · G NEW BLOCK · DRAG TO LOOK'
+      : 'HOVER TO TOUCH · DRAG TO SPIN · T ORBIT MODE · G NEW BLOCK';
   el.textContent = `${sound}${how} · ${count} CUBES`;
 }

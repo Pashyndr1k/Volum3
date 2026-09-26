@@ -56,6 +56,20 @@ export class Transport {
     this.tick();
   }
 
+  // Start with step 0 landing exactly on `time` (audio clock) — the hum recorder needs the grid
+  // to begin precisely when its window does.
+  startAt(time) {
+    if (!ctx()) return;
+    this.stop();
+    setTempo(this.bpm);
+    this.pos = 0;
+    this.startedAt = time;
+    this.nextStep = 0;
+    this.playing = true;
+    this.timer = setInterval(() => this.tick(), TICK_MS);
+    this.tick();
+  }
+
   stop() {
     if (!this.playing) return;
     this.pos = this.position();

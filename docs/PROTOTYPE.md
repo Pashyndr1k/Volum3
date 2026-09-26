@@ -25,9 +25,10 @@ Click anywhere once to enable sound, since browsers block audio until the page g
 | Input | Action |
 |---|---|
 | **Space** / PLAY | Start or stop the orbit |
+| BPM − / + | Nudge the tempo by 2 (each pattern sets its own) |
 | **T** / MODE | Switch between ORBIT and TOUCH |
-| **G** / GENERATE | New seed: a new cluster, new voices, and a new piece |
-| BPM, EMISSION | Tempo 60–140, and how much a strike throws (1 = dots only … 5 = everything, furthest) |
+| **G** / GENERATE | New seed: a new block. The pattern stays and is re-dealt to the new cubes. |
+| EMISSION | How much a strike throws (1 = dots only … 5 = everything, furthest) |
 | Hover over a cube | Touch it (in either mode). A faint circle shows the touch zone. |
 | Click a cube | Also touches it, for trackpads that never hover |
 | Drag | ORBIT mode: move the camera. TOUCH mode: spin the block, which keeps its momentum. |
@@ -44,12 +45,76 @@ Click anywhere once to enable sound, since browsers block audio until the page g
 
 Every setting is saved in the URL, so a link reproduces the whole setup.
 
+## The timeline
+
+The frame along the bottom is the pattern the indicator plays. It shows one orbit laid flat:
+64 sixteenths, which is 4 bars, with 8 lanes (MELODY, CHORD, BASS, PERC, OPEN, HAT, SNARE, KICK).
+Its playhead is the indicator's angle.
+
+| Input | Action |
+|---|---|
+| A style name (CITY POP, HOUSE, BOOM BAP, BOSSA, TRAP, AMBIENT, DRUM & BASS) | Rolls a new pattern in that style: new tempo within its range, key, chords, groove and melody |
+| RANDOM / **R** | Rolls again in the current style |
+| PRESET | Back to the default: CITY POP in F major at 100 BPM, B♭–C–Am–Dm, with a hand-written tune |
+| HUM / **H** | Record a melody by humming (below) |
+| Click a cell | Add or remove a hit. In MELODY, the height picks the pitch, snapped to the scale. |
+| Click a lane name | Mute or unmute it. Muted notes still brush their cubes, silently. |
+| **L** / TIMELINE | Hide or show the frame |
+
+The URL keeps `style` and `pattern`, so a link brings back the same groove.
+
+**How a pattern is made** (`src/patterns.js`). Each style is a probability grid per drum lane
+(one bar), plus a tempo range, keys, 3–4 chord progressions, a bass rule (follow the kick, fixed
+steps, or bossa root–fifth) and a chord rhythm. A roll builds bar A, a varied A′, A again, and A
+with a fill. The bass follows the kick in the current chord. The melody is a phrase, a variation,
+the phrase again, and an answer: it favours the beats, moves mostly by step, lands on a chord
+tone on strong beats, and ends on the tonic.
+
+**How notes become cubes** (`src/mapper.js`). A note at step *s* goes to a cube whose angle
+around the orbit is at *s*, searching ±1, ±2, ±3 steps if needed. Within that window the lane
+decides which cube: kick and bass take low, heavy cubes; hats take high ones; the melody climbs
+the block with its pitch. Free cubes are used first, and busy patterns give some cubes several
+nearby notes. Each cube takes its part's colour, and cubes with no note go dark and only get a
+light brush from the indicator. Measured across all seven styles, notes land on average 0.8–1.3
+steps (≈5–8°) from the indicator, and never more than 3.
+
+## Humming a melody
+
+Press **H** (or HUM). The browser asks for the microphone the first time. Then:
+
+1. **Count-in**: four rim clicks.
+2. **Record**: four bars. The drums and bass play as a guide and the melody lane is silent. Use
+   headphones if you can. Echo cancellation is on, but headphones are cleaner.
+3. **Result**: the hum is analysed as soon as the window closes and replaces the MELODY lane,
+   played by a sustained LEAD voice. The cubes are re-dealt to the new notes and it keeps playing.
+   **Esc** cancels.
+
+**Analysis** (`src/hum.js`):
+* Microphone chunks are stamped with the audio-clock time of their first sample (an
+  AudioWorklet), so the take lines up with the grid exactly.
+* Loudness and pitch (YIN, 75–1000 Hz) every 10 ms.
+* A new note starts when the voice starts, when the pitch moves by more than about a semitone
+  and stays, or when the loudness dips and rises on the same pitch ("da-da").
+* Onsets are rounded to the nearest sixteenth. The whole line is shifted by the semitone offset
+  that fits the song's scale best, so your intervals are kept whatever key you hum in. It is then
+  snapped to the scale and moved into the melody register.
+
+**Tested** with synthetic hums (voice-like harmonics, vibrato, timing jitter, room noise), in
+`node` and end to end in Chromium through a fake microphone. An 18-note tune came back with every
+onset on the right step and every interval exact, transposed from G major into the preset's
+F major; analysing 9.6 s takes ~150 ms. Same-pitch re-articulations are found when the voice
+dips between them.
+
 ## Files
 
 | File | Role |
 |---|---|
 | `src/cluster.js` | Carves the caverns (a hollow core, 2-cell-wide tunnels in from the faces, pockets), then packs the rest of an 8×8×8 grid with cubes of size 2 and 1 on an even lattice, stopping near 100 cubes. Each cube fills about 82 % of its slot and gets a little jitter and tilt. Also builds the contact graph. |
-| `src/music.js` | SQNCR's 16-voice table. Picks a voice for each cube from **when** it plays (its azimuth step), its size and its height. Also CITY harmony: F major, an 8-chord loop, and the chord-tone ladder, so tuned cubes stay consonant. |
+| `src/patterns.js` | Pattern model, the 7 styles, the generator and the default preset |
+| `src/mapper.js` | Deals the pattern's notes to cubes |
+| `src/timeline.js` | The timeline frame: drawing, editing, mutes |
+| `src/hum.js` | Microphone capture on the audio clock, pitch and onset analysis, hum → melody lane |
+| `src/music.js` | SQNCR's 16-voice table plus LEAD. Holds the current harmony, and a fallback voice per cube for touching cubes that carry no note. |
 | `src/audio.js` | Port of SQNCR's synthesis: master compressor, procedural plate reverb, dotted-8th delay, all 16 voice recipes, ombak detune and tremolo. No samples. |
 | `src/transport.js` | SQNCR's "two clocks" scheduler: a 20 ms timer looking 140 ms ahead on the audio clock. One orbit = 64 sixteenths (9.6 s at 100 BPM). |
 | `src/physics.js` | The spring lattice (see below) |
@@ -66,9 +131,8 @@ timestamp. The frame loop applies each strike when `audioCtx.currentTime` reache
 the flash and the note are phase-locked even though the frame rate varies. The indicator's angle is
 also derived from the audio clock.
 
-Cubes that share a step are deduplicated by voice and pitch, capped at 5 voices, and scaled by
-`1/√n`. Each cube also has a 4-orbit mask (SQNCR's variation). On a silent orbit it still gets a
-soft visual knock (energy 0.3) but makes no sound.
+At each step every note of the pattern strikes its cube and sounds (notes with the same voice and
+pitch are played once). Cubes with no note get a light brush (energy 0.14) as the indicator passes.
 
 ## Physics
 

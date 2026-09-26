@@ -48,6 +48,14 @@ export class Cubes {
     this.axis = new THREE.Vector3();
   }
 
+  setColors(colors) {
+    colors.forEach((c, i) => {
+      this.base[i].set(c);
+      this.mesh.setColorAt(i, this.base[i]);
+    });
+    this.mesh.instanceColor.needsUpdate = true;
+  }
+
   update(pieces, physics, glow) {
     const { u, th } = physics;
     for (let i = 0; i < pieces.length; i++) {

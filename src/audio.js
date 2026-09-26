@@ -10,7 +10,7 @@ import { mulberry32 } from './rng.js';
 const TONE = { decay: 1, strike: 0.15, hold: 1, reverb: 1.25, delay: 1, space: 2.2, lfoHz: 0.9, lfoDepth: 0.16, ombak: 13 };
 const SUSTAINED = new Set(['sub', 'bell', 'chord', 'noise', 'cowbell']);
 const SHORT_STRIKE = new Set(['kick', 'bass']);
-const DETUNED = new Set(['sub', 'bass', 'bell', 'chord', 'cowbell']);
+const DETUNED = new Set(['sub', 'bass', 'bell', 'chord', 'cowbell', 'lead']);
 
 let bus = null;
 
@@ -181,9 +181,9 @@ function tremolo(at, dur) {
 /**
  * Play one SQNCR voice.
  * @param voice  entry from VOICES
- * @param opts   { at, velocity, pan, midi, spread }
+ * @param opts   { at, velocity, pan, midi, spread, dur } — `dur` (seconds) only matters to `lead`
  */
-export function play(voice, { at, velocity = 0.8, pan = 0, midi, spread }) {
+export function play(voice, { at, velocity = 0.8, pan = 0, midi, spread, dur }) {
   if (!bus) return;
   const c = bus.ctx;
   const t = Math.max(at, c.currentTime + 0.002);
@@ -193,7 +193,8 @@ export function play(voice, { at, velocity = 0.8, pan = 0, midi, spread }) {
   const h = voice.decay * stretch;
   const w = voice.gain * 0.5 * (0.45 + velocity * 0.55) / Math.pow(Math.max(1, stretch), sustained ? 0.5 : 0.35);
   const m = midi ?? voice.baseMidi;
-  const out = strip(pan, voice.reverb * TONE.reverb, voice.delay * TONE.delay, t + h + 0.4);
+  const hold = voice.id === 'lead' ? Math.max(0.1, dur ?? h) : 0;
+  const out = strip(pan, voice.reverb * TONE.reverb, voice.delay * TONE.delay, t + h + hold + 0.4);
   const trem = sustained ? tremolo(t, h) : null;
   const dest = trem ?? out;
   if (trem) trem.connect(out);
@@ -341,6 +342,39 @@ export function play(voice, { at, velocity = 0.8, pan = 0, midi, spread }) {
       o.frequency.exponentialRampToValueAtTime(hz * 0.5, t + h);
       env(g, t, w, 0.001, h);
       o.connect(filter('lowpass', 4200, 4)).connect(g).connect(dest);
+      break;
+    }
+    case 'lead': {
+      // Two detuned triangles and a quiet octave, a soft attack, held for the note, with a
+      // vibrato that arrives late — closer to a voice than anything in the kit.
+      const hz = midiToHz(m);
+      const end = t + hold;
+      const g = c.createGain();
+      g.gain.setValueAtTime(1e-4, t);
+      g.gain.linearRampToValueAtTime(w * 0.8, t + 0.018);
+      g.gain.setTargetAtTime(w * 0.55, t + 0.04, 0.08);
+      g.gain.setValueAtTime(w * 0.55, end);
+      g.gain.exponentialRampToValueAtTime(1e-4, end + 0.2);
+      const lp = filter('lowpass', Math.min(4200, hz * 6), 0.7);
+      lp.connect(g).connect(dest);
+      const vib = c.createOscillator();
+      vib.frequency.value = 5.2;
+      const vibDepth = c.createGain();
+      vibDepth.gain.setValueAtTime(0, t);
+      vibDepth.gain.linearRampToValueAtTime(7, t + Math.min(0.35, hold));
+      vib.connect(vibDepth);
+      vib.start(t);
+      vib.stop(end + 0.25);
+      for (const d of detune) {
+        const o = osc('triangle', hz * cents(d), t, hold + 0.2);
+        vibDepth.connect(o.detune);
+        const k = c.createGain();
+        k.gain.value = 1 / detune.length;
+        o.connect(k).connect(lp);
+      }
+      const oct = c.createGain();
+      oct.gain.value = 0.18;
+      osc('sine', hz * 2, t, hold + 0.2).connect(oct).connect(lp);
       break;
     }
     case 'noise': {
