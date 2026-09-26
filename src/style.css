@@ -1,0 +1,62 @@
+/*
+  Same rules as SQNCR's panel: every control is a word, the panel is made of words, and nothing
+  on it is text to be selected — a drag that starts on a word must not light the line up.
+*/
+* { margin: 0; padding: 0; box-sizing: border-box; }
+* { user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+
+:root {
+  --bg: #000000;
+  --ink: #dddaca;
+  --dim: #62615a;
+  --faint: #323232;
+  --accent: #f74227;
+}
+
+html, body { width: 100%; height: 100%; overflow: hidden; background: var(--bg); }
+
+body {
+  font-family: 'DM Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+}
+
+#view { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+
+#panel {
+  position: fixed;
+  left: 24px;
+  top: 20px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 24px;
+  font-size: 14px;
+  line-height: 20px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  max-width: calc(100vw - 48px);
+}
+
+#panel .ctl { display: inline-flex; gap: 8px; white-space: nowrap; }
+#panel .name { color: var(--dim); }
+#panel .word { cursor: pointer; }
+#panel .word:hover { color: var(--accent); }
+#panel .word.on { color: var(--ink); }
+#panel .word.off { color: var(--faint); }
+#panel .brand { color: var(--ink); font-weight: 500; }
+
+#hint {
+  position: fixed;
+  left: 24px;
+  bottom: 20px;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  color: var(--dim);
+  text-transform: uppercase;
+  pointer-events: none;
+}
+
+@media (max-width: 640px) {
+  #panel { font-size: 12px; gap: 6px 16px; left: 16px; top: 16px; }
+  #hint { left: 16px; bottom: 16px; font-size: 10px; }
+}
