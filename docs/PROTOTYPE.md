@@ -25,19 +25,20 @@ Click anywhere once to enable sound, since browsers block audio until the page g
 | Input | Action |
 |---|---|
 | **Space** / PLAY | Start or stop the orbit |
-| BPM − / + | Nudge the tempo by 2 (each pattern sets its own) |
+| BPM / **B** | Switch tempo: each press goes to the next of 70 · 85 · 100 · 115 · 130 · 145, and wraps around |
 | **T** / MODE | Switch between ORBIT and TOUCH |
 | **G** / GENERATE | New seed: a new block. The pattern stays and is re-dealt to the new cubes. |
 | EMISSION | How much a strike throws (1 = dots only … 5 = everything, furthest) |
-| Hover over a cube | Touch it (in either mode). A faint circle shows the touch zone. |
-| Click a cube | Also touches it, for trackpads that never hover |
+| Hover over a cube (ORBIT mode) | Touch it: it plays its note **once**, when the pointer arrives on it. Staying on it does nothing more; moving onto another cube plays that one. Touches are tested against the block as built, so a cube knocked away never exposes the next one into a chain of triggers. |
+| Hold the pointer on the block (TOUCH mode) | The block turns at the indicator's speed and the pointer reads it like a stationary indicator: the pattern plays step by step, in tempo. Moving the pointer scrubs; taking it off the block stops. |
+| Click a cube | Always plays it, even the one already touched |
 | Drag | ORBIT mode: move the camera. TOUCH mode: spin the block, which keeps its momentum. |
 
 **Second row: the physics**
 
 | Control | Levels | What it does |
 |---|---|---|
-| ZONE | 0–4 | Touch radius: 0 = only the cube under the pointer; then 1.2, 2, 3 and 4.2 cube-widths. Everything inside is struck, harder near the centre, 30 ms later per unit of distance, and only the nearest four make sound. |
+| ZONE | 0–4 | Touch radius: 0 = only the cube under the pointer; then 1.2, 2, 3 and 4.2 cube-widths. Every cube inside is thrown at the same moment, harder near the centre, but only the touched cube sounds and throws marks. One touch, one trigger. |
 | FORCE | 1–5 | Impulse ×1, ×2, ×3.5, ×5, ×7. At the default (3) a small cube flies about 1.4 units out. At 5 it's about 2.9. |
 | SPIN | 0–4 | Random-axis spin kick of 0, 3, 6, 10 or 15 rad/s. Small cubes turn about 6° at 0, 14° at the default (2) and 21° at 4. Big cubes turn less. |
 | RETURN | 1–5 | Anchor stiffness ×0.3 … ×2.8. 1 is slow and floaty, and drags neighbours along. 5 is quick and tight. |
@@ -47,18 +48,19 @@ Every setting is saved in the URL, so a link reproduces the whole setup.
 
 ## The timeline
 
-The frame along the bottom is the pattern the indicator plays. It shows one orbit laid flat:
-64 sixteenths, which is 4 bars, with 8 lanes (MELODY, CHORD, BASS, PERC, OPEN, HAT, SNARE, KICK).
-Its playhead is the indicator's angle.
+The small frame at the bottom centre is the pattern the indicator plays: one orbit laid flat,
+64 sixteenths (4 bars). It shows only the lanes in use (MELODY always; then CHORD, BASS, PERC,
+OPEN, HAT, SNARE, KICK as needed). Marks are in one ink, and each lane's letter is in the colour
+its cubes take. The playhead is the indicator's angle.
 
 | Input | Action |
 |---|---|
-| A style name (CITY POP, HOUSE, BOOM BAP, BOSSA, TRAP, AMBIENT, DRUM & BASS) | Rolls a new pattern in that style: new tempo within its range, key, chords, groove and melody |
-| RANDOM / **R** | Rolls again in the current style |
-| PRESET | Back to the default: CITY POP in F major at 100 BPM, B♭–C–Am–Dm, with a hand-written tune |
+| The style name (CITY POP, HOUSE, BOOM BAP, BOSSA, TRAP, AMBIENT, DRUM & BASS) | Next style: a new pattern in it, with its own tempo, key, chords, groove and melody |
+| NEW / **R** | A new pattern in the current style |
 | HUM / **H** | Record a melody by humming (below) |
-| Click a cell | Add or remove a hit. In MELODY, the height picks the pitch, snapped to the scale. |
-| Click a lane name | Mute or unmute it. Muted notes still brush their cubes, silently. |
+| PRESET | Back to the default: CITY POP in F major at 100 BPM, B♭–C–Am–Dm, with a hand-written tune |
+| Click the grid | Add or remove a mark. In the melody lane, the height picks the pitch. |
+| Click a lane letter | Mute or unmute the lane |
 | **L** / TIMELINE | Hide or show the frame |
 
 The URL keeps `style` and `pattern`, so a link brings back the same groove.
@@ -83,11 +85,11 @@ steps (≈5–8°) from the indicator, and never more than 3.
 Press **H** (or HUM). The browser asks for the microphone the first time. Then:
 
 1. **Count-in**: four rim clicks.
-2. **Record**: four bars. The drums and bass play as a guide and the melody lane is silent. Use
-   headphones if you can. Echo cancellation is on, but headphones are cleaner.
-3. **Result**: the hum is analysed as soon as the window closes and replaces the MELODY lane,
-   played by a sustained LEAD voice. The cubes are re-dealt to the new notes and it keeps playing.
-   **Esc** cancels.
+2. **Record**: four bars, with a quiet click on every beat to keep time and nothing of the
+   old song playing.
+3. **Result**: the hum **replaces the whole composition**. The pattern becomes just the hummed
+   melody, in the key you hummed it in, played by a sustained LEAD voice. Its cubes light up, the
+   rest go dark, and it plays from bar one. **Esc** cancels.
 
 **Analysis** (`src/hum.js`):
 * Microphone chunks are stamped with the audio-clock time of their first sample (an
@@ -95,14 +97,18 @@ Press **H** (or HUM). The browser asks for the microphone the first time. Then:
 * Loudness and pitch (YIN, 75–1000 Hz) every 10 ms.
 * A new note starts when the voice starts, when the pitch moves by more than about a semitone
   and stays, or when the loudness dips and rises on the same pitch ("da-da").
-* Onsets are rounded to the nearest sixteenth. The whole line is shifted by the semitone offset
-  that fits the song's scale best, so your intervals are kept whatever key you hum in. It is then
-  snapped to the scale and moved into the melody register.
+* The window is shifted by the microphone's reported input latency (20 ms if the browser doesn't
+  say), so onsets aren't late.
+* The key comes from the hum: the major or minor scale that holds most of it, weighted by how
+  long each note is held. Notes are rounded to the semitone. Only notes outside that key are
+  nudged to their nearest neighbour in it, and the line is moved by whole octaves into a
+  comfortable register. The pitches and intervals are yours.
+* Onsets round to the nearest sixteenth and lengths to whole steps.
 
 **Tested** with synthetic hums (voice-like harmonics, vibrato, timing jitter, room noise), in
 `node` and end to end in Chromium through a fake microphone. An 18-note tune came back with every
-onset on the right step and every interval exact, transposed from G major into the preset's
-F major; analysing 9.6 s takes ~150 ms. Same-pitch re-articulations are found when the voice
+onset on the right step and every interval exact, and its key was read as G major, which is the
+key it was sung in. Analysing 9.6 s takes about 150 ms. Same-pitch re-articulations are found when the voice
 dips between them.
 
 ## Files

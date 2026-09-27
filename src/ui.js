@@ -44,11 +44,7 @@ export function renderPanel(el, state, act) {
     { text: 'TOUCH', on: state.mode === 'touch', onClick: () => act.setMode('touch') },
   ]);
   ctl(null, [{ text: 'GENERATE', onClick: act.generate }]);
-  ctl('BPM', [
-    { text: '−', onClick: () => act.setBpm(state.bpm - 2) },
-    { text: String(state.bpm), on: true },
-    { text: '+', onClick: () => act.setBpm(state.bpm + 2) },
-  ]);
+  ctl('BPM', [{ text: String(state.bpm), on: true, onClick: act.cycleBpm }], 'Click to switch: 70 · 85 · 100 · 115 · 130 · 145');
   ctl('EMISSION', [1, 2, 3, 4, 5].map((g) => ({ text: String(g), on: state.grain === g, onClick: () => act.setGrain(g) })));
   ctl('SEED', [{ text: state.seed.toString(36).toUpperCase(), on: true }]);
   ctl(null, [{ text: 'TIMELINE', on: state.timeline, onClick: act.toggleTimeline }]);
@@ -65,7 +61,7 @@ export function renderHint(el, state, count) {
   const sound = state.unlocked ? '' : 'CLICK FOR SOUND · ';
   const how =
     state.mode === 'orbit'
-      ? 'SPACE PLAY · R NEW RHYTHM · H HUM A MELODY · L TIMELINE · T TOUCH MODE · G NEW BLOCK · DRAG TO LOOK'
-      : 'HOVER TO TOUCH · DRAG TO SPIN · T ORBIT MODE · G NEW BLOCK';
+      ? 'SPACE PLAY · R NEW RHYTHM · H HUM · B TEMPO · L TIMELINE · T TOUCH · G NEW BLOCK'
+      : 'HOLD THE POINTER ON THE BLOCK · IT TURNS IN TEMPO · DRAG TO SPIN · T ORBIT';
   el.textContent = `${sound}${how} · ${count} CUBES`;
 }

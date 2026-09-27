@@ -61,35 +61,32 @@ body {
   #panel { font-size: 12px; gap: 6px; left: 16px; top: 16px; }
   #panel .row { gap: 6px 16px; }
   #hint { left: 16px; top: 76px; font-size: 10px; }
-  #timeline { left: 8px; right: 8px; bottom: 8px; }
 }
 
 /*
-  The timeline sits in its own frame along the bottom: a hairline box on near-black, the same
-  words-as-controls header as the panel, and a canvas drawn every frame.
+  The timeline: a small, quiet strip at the bottom centre — a hairline frame, one line of words,
+  and the lanes. Nothing in it competes with the block.
 */
 #timeline {
   position: fixed;
-  left: 24px;
-  right: 24px;
-  bottom: 20px;
-  padding: 10px 12px 12px;
-  background: rgba(6, 6, 6, 0.88);
-  border: 1px solid var(--faint);
-  font-size: 12px;
-  line-height: 18px;
-  letter-spacing: 0.06em;
+  left: 50%;
+  bottom: 16px;
+  transform: translateX(-50%);
+  width: min(620px, calc(100vw - 32px));
+  padding: 7px 10px 8px;
+  background: rgba(0, 0, 0, 0.72);
+  border: 1px solid #1e1e1d;
+  font-size: 10px;
+  line-height: 14px;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
 }
 #timeline[hidden] { display: none; }
-#timeline .tl-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 20px; margin-bottom: 8px; }
-#timeline .group { display: inline-flex; flex-wrap: wrap; gap: 4px 12px; }
-#timeline .brand { color: var(--ink); font-weight: 500; }
-#timeline .name { color: var(--dim); }
-#timeline .word { cursor: pointer; white-space: nowrap; }
+#timeline .tl-head { display: flex; align-items: baseline; gap: 14px; margin-bottom: 6px; white-space: nowrap; }
+#timeline .word { cursor: pointer; }
 #timeline .word:hover { color: var(--accent); }
 #timeline .word.on { color: var(--ink); }
-#timeline .word.off { color: #55534c; }
+#timeline .word.dim { color: var(--dim); }
 #timeline .word.rec, #timeline .status.rec { color: var(--accent); }
-#timeline .status { color: var(--dim); margin-left: auto; }
+#timeline .status { color: var(--dim); margin-left: auto; overflow: hidden; text-overflow: ellipsis; }
 #timeline .tl-canvas { display: block; width: 100%; cursor: pointer; }

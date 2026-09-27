@@ -1,4 +1,4 @@
-import { melodyNotes, SCALES } from './patterns.js';
+import { SCALES } from './patterns.js';
 
 /*
   Hum a tune, get a melody lane.
@@ -16,10 +16,12 @@ import { melodyNotes, SCALES } from './patterns.js';
        stays there, or when the loudness dips and rises again on the same pitch ("da-da").
     4. Each note: onset, length, median pitch.
 
-  Conversion (humToEvents): onsets round to the nearest sixteenth, lengths to whole steps. The
-  hum is sung in whatever key the singer likes, so the whole line is shifted by the semitone
-  offset that puts the most of it in the pattern's scale — intervals are kept — then snapped to
-  the scale and moved by octaves to sit in the melody's register.
+  Conversion (humToMelody): the hum becomes the whole composition, so nothing is bent to fit an
+  existing key. The key is read from the hum itself — the major or minor scale that holds the
+  most of it, weighted by how long each note is held — and each note is rounded to the nearest
+  semitone and, only if it falls outside that scale, nudged to its neighbour in it. The line is
+  moved by whole octaves into a comfortable register; its pitches and intervals are the singer's.
+  Onsets round to the nearest sixteenth, lengths to whole steps.
 */
 
 const WORKLET = `
@@ -68,7 +70,11 @@ export async function openMic(ctx) {
     for (let i = 0; i < e.data.d.length; i++) s += e.data.d[i] * e.data.d[i];
     level = Math.sqrt(s / e.data.d.length);
   };
+  // What the browser says the input path delays the signal by; used to pull the take back in time.
+  const track = stream.getAudioTracks()[0];
+  const latency = Math.min(0.2, track?.getSettings?.().latency ?? 0.02);
   return {
+    latency,
     level: () => level,
     // Samples between two audio-clock times, placed by each chunk's own timestamp.
     take(t0, t1) {
@@ -255,42 +261,49 @@ export function analyzeHum(input, sampleRate) {
   return notes;
 }
 
-export function humToEvents(notes, pattern, stepSec, steps) {
-  if (notes.length === 0) return [];
-  const scale = SCALES[pattern.melodyScale];
-  const inScale = (m) => scale.includes((((m - pattern.root) % 12) + 12) % 12);
+export function humToMelody(notes, stepSec, steps) {
+  if (notes.length === 0) return null;
+  const rounded = notes.map((n) => Math.round(n.midi));
 
-  // Keep the singer's intervals: find the transposition that fits the scale best.
-  let bestShift = 0;
-  let bestFit = -1;
-  for (let k = -6; k <= 5; k++) {
-    let fit = 0;
-    for (const n of notes) if (inScale(Math.round(n.midi + k))) fit += n.dur;
-    if (fit > bestFit) {
-      bestFit = fit;
-      bestShift = k;
+  // The key: the major or minor scale that holds the most of the hum, weighted by duration, with
+  // a nudge toward the root the tune starts or ends on.
+  let best = { root: 0, scale: 'major', fit: -1 };
+  for (const scale of ['major', 'minor'])
+    for (let root = 0; root < 12; root++) {
+      const steps7 = SCALES[scale];
+      let fit = 0;
+      rounded.forEach((m, k) => {
+        const pc = (((m - root) % 12) + 12) % 12;
+        if (steps7.includes(pc)) fit += notes[k].dur;
+        if (pc === 0 && (k === 0 || k === rounded.length - 1)) fit += 0.15;
+      });
+      if (fit > best.fit + 1e-6) best = { root, scale, fit };
     }
-  }
-  const shifted = notes.map((n) => n.midi + bestShift);
-  const med = median(shifted);
-  const octave = Math.round((72 - med) / 12) * 12;
-  const pool = melodyNotes(pattern, 55, 91);
-  const snap = (m) => pool.reduce((a, b) => (Math.abs(b - m) < Math.abs(a - m) ? b : a));
+  const inKey = (m) => SCALES[best.scale].includes((((m - best.root) % 12) + 12) % 12);
+  const fitted = rounded.map((m, k) => {
+    if (inKey(m)) return m;
+    // Out of key: go to the in-key neighbour on the side the sung pitch leaned toward.
+    const up = inKey(m + 1), down = inKey(m - 1);
+    if (up && down) return notes[k].midi >= m ? m + 1 : m - 1;
+    return up ? m + 1 : down ? m - 1 : m;
+  });
+
+  const med = median(fitted);
+  const octave = Math.round((67 - med) / 12) * 12;
 
   const byStep = new Map();
   notes.forEach((n, k) => {
     const step = Math.round(n.t / stepSec);
     if (step < 0 || step >= steps) return;
     const len = Math.max(1, Math.min(steps - step, Math.round(n.dur / stepSec)));
-    const e = { lane: 'melody', step, len, midi: snap(shifted[k] + octave), vel: 0.55 + 0.4 * n.level, hummed: true };
+    const e = { lane: 'melody', step, len, midi: fitted[k] + octave, vel: 0.55 + 0.4 * n.level };
     const prev = byStep.get(step);
     if (!prev || prev.len < e.len) byStep.set(step, e);
   });
-  // Trim lengths so notes don't overlap the next one.
-  const out = [...byStep.values()].sort((a, b) => a.step - b.step);
-  out.forEach((e, k) => {
-    const next = out[k + 1];
+  const events = [...byStep.values()].sort((a, b) => a.step - b.step);
+  events.forEach((e, k) => {
+    const next = events[k + 1];
     if (next) e.len = Math.max(1, Math.min(e.len, next.step - e.step));
   });
-  return out;
+  return { root: best.root, scale: best.scale, events };
 }

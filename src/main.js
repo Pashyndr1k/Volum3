@@ -7,10 +7,10 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 
 import { generateCluster } from './cluster.js';
 import { assignVoices, noteFor, chordAt, chordSpread, setHarmony, VOICE } from './music.js';
-import { presetPattern, generatePattern, SCALES, STYLE } from './patterns.js';
+import { presetPattern, generatePattern, SCALES, STYLE, STYLES } from './patterns.js';
 import { mapPattern } from './mapper.js';
 import { Timeline } from './timeline.js';
-import { openMic, analyzeHum, humToEvents } from './hum.js';
+import { openMic, analyzeHum, humToMelody } from './hum.js';
 import { pairFor, INK } from './palette.js';
 import { ClusterPhysics, TUNING } from './physics.js';
 import { Cubes } from './cubes.js';
@@ -31,11 +31,13 @@ const intParam = (k, lo, hi, dflt) => {
 const STEPS = 64; // one orbit = four bars of sixteenths
 const ORBIT_RADIUS = 7.6;
 const ORBIT_TILT = new THREE.Quaternion().setFromEuler(new THREE.Euler(0.22, 0, 0.1));
+const ORBIT_TILT_INV = ORBIT_TILT.clone().invert();
+const READ_LATENCY = 0.04; // a still pointer's notes are scheduled this far ahead, for steady timing
 const HEAT_TAU = 0.3; // seconds; a struck cube is back to its colour in about 4–6 steps
-const TOUCH_COOLDOWN = 0.15;
+const RETOUCH = 0.25; // a cube can't be touched again sooner than this, even at the edge between two
 const GHOST = 0.14; // how hard the indicator brushes a cube that has no note this orbit
 const IDLE_COLOR = '#2b2a27'; // cubes without a note go dark, so the block shows the pattern
-const MAX_VOICES_PER_TOUCH = 4;
+const BPM_STEPS = [70, 85, 100, 115, 130, 145]; // the BPM switch cycles through these
 
 // Panel levels → physical values. Level 0/1 is the first entry.
 const ZONE_RADIUS = [0, 1.2, 2, 3, 4.2]; // ZONE 0…4: touch radius in cube units (0 = one cube)
@@ -154,7 +156,7 @@ const trail = (() => {
   geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(TRAIL * 3), 3));
   const col = new Float32Array(TRAIL * 3);
   for (let i = 0; i < TRAIL; i++) {
-    const a = Math.pow(i / (TRAIL - 1), 2) * 1.6;
+    const a = Math.pow(i / (TRAIL - 1), 2) * 0.7;
     col.set([a, a * 0.98, a * 0.93], i * 3);
   }
   geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
@@ -168,11 +170,11 @@ const trail = (() => {
 })();
 
 const indicator = new THREE.Mesh(
-  new THREE.BoxGeometry(0.3, 0.3, 0.3),
-  new THREE.MeshBasicMaterial({ color: new THREE.Color(INK).multiplyScalar(3), toneMapped: false }),
+  new THREE.BoxGeometry(0.46, 0.46, 0.46),
+  new THREE.MeshBasicMaterial({ color: new THREE.Color(INK).multiplyScalar(1.05), toneMapped: false }),
 );
 stage.add(indicator);
-const indicatorLight = new THREE.PointLight(0xfff1dc, 55, 13, 2);
+const indicatorLight = new THREE.PointLight(0xfff1dc, 40, 13, 2);
 indicator.add(indicatorLight);
 
 function placeIndicator(theta) {
@@ -201,8 +203,28 @@ function stepOf(rest) {
   return Math.round((phi / (Math.PI * 2)) * STEPS) % STEPS;
 }
 
+/*
+  Touches are tested against every cube at its home position, not where it is now. A touched
+  cube flies off; if the pointer then found the cube behind it, that one would fly too, and the
+  next — one touch would become a chain. The block as built is what the pointer touches.
+*/
+function restProxy(pieces) {
+  const mesh = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshBasicMaterial(), pieces.length);
+  const m = new THREE.Matrix4();
+  pieces.forEach((p, i) => mesh.setMatrixAt(i, m.compose(p.rest, p.restQuat, new THREE.Vector3().setScalar(p.scale))));
+  mesh.visible = false;
+  mesh.computeBoundingSphere();
+  cluster.add(mesh);
+  return mesh;
+}
+
 function build(seed) {
-  if (world) world.cubes.dispose();
+  if (world) {
+    world.cubes.dispose();
+    cluster.remove(world.proxy);
+    world.proxy.geometry.dispose();
+    world.proxy.dispose();
+  }
   emissions.clear();
   const { pieces, edges } = generateCluster(seed, state.caves);
   for (const p of pieces) p.step = stepOf(p.rest);
@@ -225,6 +247,7 @@ function build(seed) {
     pieces,
     physics,
     cubes,
+    proxy: restProxy(pieces),
     buckets,
     mapping,
     idleByStep: idleBuckets(pieces, mapping),
@@ -264,6 +287,7 @@ function setPattern(p) {
   transport.swing = p.swing;
   if (world) remap();
   timeline.setPattern(p);
+  frameView(); // the timeline's height follows the lanes in use
   syncUrl();
   refreshUi();
 }
@@ -321,15 +345,16 @@ function soundPiece(i, at, absStep, velocity) {
   play(n.voice, { at, velocity, pan: panOf(i), midi: n.midi, spread: n.spread, dur: n.len * transport.stepSec() });
 }
 
-// Apply a strike now: impulse, heat, and the emission throw. `dir` is in the cluster's frame.
-function strike(i, dir, arm, energy, t) {
+// Apply a strike now: impulse, heat, and (unless quiet) the emission throw. `dir` is in the
+// cluster's frame.
+function strike(i, dir, arm, energy, t, quiet = false) {
   const { pieces, physics, heat } = world;
   physics.strike(i, [dir.x, dir.y, dir.z], [arm.x, arm.y, arm.z], energy);
   heat[i] = Math.max(heat[i], energy);
   const p = pieces[i];
   const o = i * 3;
   tmpV.set(p.rest.x + physics.u[o], p.rest.y + physics.u[o + 1], p.rest.z + physics.u[o + 2]);
-  emissions.throw(tmpV, p.scale, world.cubes.base[i], energy, state.grain, t);
+  if (!quiet) emissions.throw(tmpV, p.scale, world.cubes.base[i], energy, state.grain, t);
 }
 
 // Called by the transport for every step, ahead of time. Sound is booked now; the picture waits.
@@ -337,10 +362,21 @@ function strike(i, dir, arm, energy, t) {
 function onStep(absStep, time) {
   if (!world || state.mode !== 'orbit') return;
   const s = absStep % STEPS;
+  if (hum.active) {
+    // While recording, the guide is a plain click on every beat — nothing of the old tune.
+    if (s % 4 === 0) play(VOICE.get('rim'), { at: time, velocity: s % 16 === 0 ? 0.55 : 0.3 });
+    return;
+  }
+  playStep(s, time);
+}
+
+// Everything that happens at one step: each note strikes its cube and sounds; empty cubes get a brush.
+function playStep(s, time) {
+  debug.trace?.push([s, time]);
   const sec = transport.stepSec();
   const heard = new Set();
   for (const { event, cube } of world.mapping.byStep[s]) {
-    const silent = timeline.muted.has(event.lane) || (hum.active && event.lane === 'melody');
+    const silent = timeline.muted.has(event.lane);
     pending.push({ time, i: cube, energy: silent ? GHOST : Math.min(1, (event.vel ?? 0.8) * 1.1), gen: world });
     if (silent) continue;
     const voice = VOICE.get(pattern.voices[event.lane]);
@@ -373,11 +409,14 @@ function applyPending(t) {
 
 const transport = new Transport({ bpm: state.bpm, steps: STEPS, swing: pattern.swing, onStep });
 
+// Set `volum3.debug.trace = []` in the console to log every step played as [step, audio time].
+const debug = { trace: null };
+
 // ---- Touch ----------------------------------------------------------------------------------
 
 const raycaster = new THREE.Raycaster();
-const pointer = { x: 0, y: 0, lastX: 0, lastY: 0, lastT: 0, speed: 0, down: false, dragged: false };
-const spin = { vel: new THREE.Vector3(), auto: new THREE.Vector3(0.06, 0.22, 0) };
+const pointer = { lastX: 0, lastY: 0, lastT: 0, speed: 0, down: false, dragged: false, inside: false, cube: -1 };
+const spin = { vel: new THREE.Vector3() };
 
 // The touch zone, drawn as a faint circle facing the camera wherever the pointer meets the block.
 const cursor = (() => {
@@ -397,7 +436,7 @@ function hover(clientX, clientY) {
   if (!world) return null;
   const ndc = new THREE.Vector2((clientX / window.innerWidth) * 2 - 1, -(clientY / window.innerHeight) * 2 + 1);
   raycaster.setFromCamera(ndc, camera);
-  const hit = raycaster.intersectObject(world.cubes.mesh, false)[0];
+  const hit = raycaster.intersectObject(world.proxy, false)[0];
   cursor.visible = !!hit;
   if (hit) {
     cursor.position.copy(hit.point);
@@ -408,54 +447,108 @@ function hover(clientX, clientY) {
 }
 
 /*
-  A touch strikes every cube within the zone around the point of contact: full strength at the
-  centre, fading toward the edge, each one a little later the further out it is (30 ms per
-  unit) — so a wide touch lands as a quick ripple, not a slab. Only the nearest few sound.
+  One touch, one trigger. The cube under the pointer plays its note once, when the pointer
+  arrives on it; staying on it does nothing more, and only arriving on another cube (or clicking)
+  plays again. This runs every frame, not only when the mouse moves — in TOUCH mode the block
+  turns under a still pointer, so the cubes come to it, one after another, in time.
+
+  ZONE widens the push, not the sound: every cube within the radius is thrown at the same moment,
+  harder near the centre, but only the touched cube sounds and throws its marks.
 */
-function touchAt(clientX, clientY) {
+function touchAt(clientX, clientY, force = false) {
   const hit = hover(clientX, clientY);
-  if (!hit) return;
+  if (!hit) {
+    pointer.cube = -1;
+    return;
+  }
+  const i0 = hit.instanceId;
+  if (i0 === pointer.cube && !force) return;
+  pointer.cube = i0;
   const t = now();
-  const radius = ZONE_RADIUS[state.zone];
+  const { pieces, physics, lastTouch } = world;
+  if (t - lastTouch[i0] < RETOUCH && !force) return;
+  lastTouch[i0] = t;
+
   const inv = tmpQ.copy(cluster.getWorldQuaternion(new THREE.Quaternion())).invert();
   const ray = raycaster.ray.direction.clone().applyQuaternion(inv);
   const contact = cluster.worldToLocal(hit.point.clone());
-  const base = Math.min(1, 0.6 + pointer.speed / 2500);
-  const { pieces, physics, lastTouch } = world;
-
-  const touched = [];
-  if (radius === 0) touched.push({ i: hit.instanceId, d: 0 });
-  else
-    for (let i = 0; i < pieces.length; i++) {
-      const o = i * 3;
-      const d = Math.max(0, Math.hypot(
-        pieces[i].rest.x + physics.u[o] - contact.x,
-        pieces[i].rest.y + physics.u[o + 1] - contact.y,
-        pieces[i].rest.z + physics.u[o + 2] - contact.z,
-      ) - pieces[i].scale / 2);
-      if (d <= radius) touched.push({ i, d });
-    }
-  touched.sort((a, b) => a.d - b.d);
-
-  const absStep = Math.floor(transport.playing ? transport.position(t) : t / transport.stepSec());
-  const heard = new Set();
-  for (const { i, d } of touched) {
-    if (t - lastTouch[i] < TOUCH_COOLDOWN) continue;
-    lastTouch[i] = t;
-    const energy = radius === 0 ? base : base * Math.pow(1 - d / (radius + 0.5), 0.7);
-    const delay = d * 0.03;
-    const dir = pushDir(i, ray);
-    if (delay < 0.004) {
-      const arm = contact.clone().sub(pieces[i].rest).clampLength(0, pieces[i].scale / 2);
-      strike(i, dir, arm, energy, t);
-    } else pending.push({ time: t + delay, i, energy, gen: world, dir });
-    if (!audioReady()) continue;
-    const n = noteOf(i, absStep);
-    const k = `${n.voice.id}:${n.midi}`;
-    if (heard.has(k) || heard.size >= MAX_VOICES_PER_TOUCH) continue;
-    heard.add(k);
-    soundPiece(i, t + 0.01 + delay, absStep, energy);
+  const energy = Math.min(1, 0.65 + pointer.speed / 2500);
+  strike(i0, pushDir(i0, ray), contact.clone().sub(pieces[i0].rest).clampLength(0, pieces[i0].scale / 2), energy, t);
+  if (audioReady()) {
+    const absStep = Math.floor(transport.playing ? transport.position(t) : t / transport.stepSec());
+    soundPiece(i0, t + 0.01, absStep, energy);
   }
+
+  const radius = ZONE_RADIUS[state.zone];
+  if (radius === 0) return;
+  for (let i = 0; i < pieces.length; i++) {
+    if (i === i0) continue;
+    const o = i * 3;
+    const d = Math.max(0, Math.hypot(
+      pieces[i].rest.x + physics.u[o] - contact.x,
+      pieces[i].rest.y + physics.u[o + 1] - contact.y,
+      pieces[i].rest.z + physics.u[o + 2] - contact.z,
+    ) - pieces[i].scale / 2);
+    if (d > radius) continue;
+    const e = energy * Math.pow(1 - d / (radius + 0.5), 0.7);
+    const arm = new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).multiplyScalar(pieces[i].scale * 0.4);
+    strike(i, pushDir(i, ray), arm, e, t, true);
+  }
+}
+
+/*
+  TOUCH mode: the pointer is a stationary indicator. Where it rests on the block it reads the
+  block's own angle there — the step under it — and the block turns at the orbit's speed, so that
+  step advances exactly as the indicator would. Each step boundary it passes plays that step of
+  the pattern, the same notes and the same cubes the indicator would strike. Moving the pointer
+  around the block scrubs through the steps; taking it off the block stops the reading.
+*/
+const reader = { phi: null, t: 0, anchor: null };
+let blockTurn = 0; // radians the block has turned about the orbit axis in TOUCH mode
+
+function readAt(clientX, clientY, t) {
+  const hit = hover(clientX, clientY);
+  // Over a cavern a still pointer hits nothing for a moment; it keeps reading all the same.
+  // Only a pointer that has moved off the block stops.
+  if (!hit && !reader.anchor) {
+    reader.phi = null;
+    return;
+  }
+  // Where the pointer comes to rest, note the block's angle under it once. From then on the
+  // reading advances only by how far the block has turned — exactly the orbit's speed — not by
+  // the ins and outs of the surface the pointer happens to be over.
+  if (reader.anchor === null) {
+    const local = cluster.worldToLocal(hit.point.clone()).applyQuaternion(ORBIT_TILT_INV);
+    let a = (Math.atan2(-local.z, local.x) / (Math.PI * 2)) * STEPS;
+    if (a < 0) a += STEPS;
+    reader.anchor = { phi: a, turn: blockTurn };
+  }
+  let phi = reader.anchor.phi + ((reader.anchor.turn - blockTurn) / (Math.PI * 2)) * STEPS;
+  phi = ((phi % STEPS) + STEPS) % STEPS;
+  if (reader.phi === null) {
+    reader.phi = phi;
+    reader.t = t;
+    return;
+  }
+  let d = phi - reader.phi;
+  if (d > STEPS / 2) d -= STEPS;
+  if (d < -STEPS / 2) d += STEPS;
+  const from = reader.phi;
+  const to = from + d;
+  // Step boundaries crossed since the last frame, each at its interpolated moment. A small move
+  // of the pointer scrubs through the steps it passes; a jump to another part of the block just
+  // moves the reading there without playing everything in between.
+  if (Math.abs(d) <= 8) {
+    const crossings = [];
+    if (d > 0) for (let k = Math.floor(from) + 1; k <= Math.floor(to); k++) crossings.push(k);
+    else if (d < 0) for (let k = Math.floor(from); k > Math.floor(to); k--) crossings.push(k);
+    for (const k of crossings) {
+      const at = reader.t + ((k - from) / (to - from)) * (t - reader.t) + READ_LATENCY;
+      playStep(((k % STEPS) + STEPS) % STEPS, Math.max(at, t + 0.005));
+    }
+  }
+  reader.phi = phi;
+  reader.t = t;
 }
 
 canvas.addEventListener('pointerdown', (e) => {
@@ -481,27 +574,34 @@ canvas.addEventListener('pointermove', (e) => {
   pointer.lastX = e.clientX;
   pointer.lastY = e.clientY;
   pointer.lastT = t;
+  pointer.inside = true;
+  if (Math.abs(dx) + Math.abs(dy) > 0) reader.anchor = null; // the pointer moved: read from where it is now
   if (pointer.down) {
     if (Math.abs(dx) + Math.abs(dy) > 0) pointer.dragged = true;
     cursor.visible = false;
     if (state.mode === 'touch') {
-      // Drag spins the block about the camera's up and right axes; release keeps the momentum.
+      // Drag adds a spin of its own on top of the steady turn; it fades once let go.
       spin.vel.x = dy * 0.25;
       spin.vel.y = dx * 0.25;
     }
-    return;
   }
-  touchAt(e.clientX, e.clientY);
 });
 
 const release = () => {
-  // A click without a drag touches the cube under the pointer, for trackpads that never hover.
-  if (pointer.down && !pointer.dragged) touchAt(pointer.lastX, pointer.lastY);
+  // A click without a drag always plays the cube under the pointer, even the one already touched.
+  if (pointer.down && !pointer.dragged) touchAt(pointer.lastX, pointer.lastY, true);
   pointer.down = false;
 };
 canvas.addEventListener('pointerup', release);
 canvas.addEventListener('pointercancel', () => (pointer.down = false));
-canvas.addEventListener('pointerleave', () => (cursor.visible = false));
+canvas.addEventListener('pointerenter', () => (pointer.inside = true));
+canvas.addEventListener('pointerleave', () => {
+  pointer.inside = false;
+  pointer.cube = -1;
+  reader.phi = null;
+  reader.anchor = null;
+  cursor.visible = false;
+});
 
 // ---- Actions and UI -------------------------------------------------------------------------
 
@@ -540,6 +640,14 @@ const act = {
     syncUrl();
     refreshUi();
   },
+  // BPM is a switch: each press moves to the next of six tempos, and wraps around.
+  cycleBpm() {
+    act.setBpm(BPM_STEPS.find((b) => b > state.bpm) ?? BPM_STEPS[0]);
+  },
+  nextStyle() {
+    const ids = STYLES.map((s) => s.id);
+    act.randomPattern(ids[(ids.indexOf(pattern.style) + 1) % ids.length]);
+  },
   setBpm(bpm) {
     state.bpm = Math.max(50, Math.min(180, bpm));
     pattern.bpm = state.bpm;
@@ -549,7 +657,7 @@ const act = {
     refreshUi();
   },
   randomPattern(styleId = pattern.style) {
-    const p = generatePattern(styleId, randomSeed());
+    const p = generatePattern(STYLE.has(styleId) ? styleId : STYLES[0].id, randomSeed());
     p.naturalBpm = p.bpm;
     setPattern(p);
     timeline.setStatus('');
@@ -603,6 +711,7 @@ window.addEventListener('keydown', (e) => {
   else if (e.key === 'r' || e.key === 'R') act.randomPattern();
   else if (e.key === 'l' || e.key === 'L') act.toggleTimeline();
   else if (e.key === 'h' || e.key === 'H') act.hum();
+  else if (e.key === 'b' || e.key === 'B') act.cycleBpm();
   else if (e.key === 'Escape' && hum.active) stopHum('CANCELLED');
 });
 
@@ -626,19 +735,18 @@ window.addEventListener('resize', () => {
 const timelineEl = document.getElementById('timeline');
 timelineEl.hidden = !state.timeline;
 const timeline = new Timeline(timelineEl, {
-  onStyle: (id) => act.randomPattern(id),
+  onNextStyle: () => act.nextStyle(),
   onRandom: () => act.randomPattern(),
   onPreset: () => act.presetPattern(),
   onHum: () => act.hum(),
-  onMute: () => {},
   onEdit: (p) => setPattern(p),
 });
 
 /*
-  Humming: open the microphone, count one bar in on the rim, then play the pattern with its
-  melody silenced as a guide while four bars are recorded. When the window closes, the take is
-  analysed and becomes the melody lane — played by the sustained LEAD voice — and the cubes are
-  re-dealt to its notes. The guide keeps going, so the result plays straight away.
+  Humming: open the microphone, count one bar in on the rim, then keep a plain click on every
+  beat while four bars are recorded. When the window closes the take is analysed and becomes the
+  whole composition — just the hummed melody, in the key it was hummed in, played by the
+  sustained LEAD voice — and the cubes are re-dealt to its notes. It starts playing from bar one.
 */
 const hum = { active: false, mic: null, t0: 0, dur: 0, countAt: 0, timer: 0, shown: '' };
 
@@ -669,7 +777,7 @@ async function startHum() {
   transport.startAt(hum.t0);
   state.playing = true;
   refreshUi();
-  hum.timer = setTimeout(finishHum, (hum.t0 + hum.dur - c.currentTime + 0.25) * 1000);
+  hum.timer = setTimeout(finishHum, (hum.t0 + hum.dur + hum.mic.latency - c.currentTime + 0.25) * 1000);
 }
 
 function stopHum(message) {
@@ -683,22 +791,40 @@ function stopHum(message) {
 
 function finishHum() {
   if (!hum.active) return;
-  const samples = hum.mic.take(hum.t0, hum.t0 + hum.dur);
+  // The microphone hears everything a little late; take the window that late too.
+  const lag = hum.mic.latency;
+  const samples = hum.mic.take(hum.t0 + lag, hum.t0 + lag + hum.dur);
   const sampleRate = audioCtx().sampleRate;
   stopHum('ANALYSING');
-  const notes = analyzeHum(samples, sampleRate);
-  const melody = humToEvents(notes, pattern, transport.stepSec(), STEPS);
-  if (melody.length === 0) {
+  transport.stop();
+  const tune = humToMelody(analyzeHum(samples, sampleRate), transport.stepSec(), STEPS);
+  if (!tune || tune.events.length === 0) {
+    state.playing = false;
+    refreshUi();
     timeline.setStatus('HEARD NOTHING · HUM LOUDER, CLOSER TO THE MIC');
     return;
   }
+  const scale = tune.scale;
   setPattern({
-    ...pattern,
     name: 'HUMMED',
+    style: 'hum',
+    seed: 0,
+    bpm: pattern.bpm,
+    naturalBpm: pattern.bpm,
+    swing: 0,
+    root: tune.root,
+    scale,
+    melodyScale: scale,
+    seventh: false,
+    progression: [0, 0, 0, 0],
     voices: { ...pattern.voices, melody: 'lead' },
-    events: [...pattern.events.filter((e) => e.lane !== 'melody'), ...melody],
+    events: tune.events,
   });
-  timeline.setStatus(`HEARD ${melody.length} NOTES`);
+  timeline.setStatus(`HEARD ${tune.events.length} NOTES`);
+  transport.pos = 0;
+  transport.startAt(audioCtx().currentTime + 0.15);
+  state.playing = true;
+  refreshUi();
 }
 
 function updateHum(t) {
@@ -708,7 +834,7 @@ function updateHum(t) {
   const count = Math.max(1, Math.min(4, 4 - Math.floor((t - hum.countAt) / beat)));
   const bar = Math.min(4, 1 + Math.floor((t - hum.t0) / (beat * 4)));
   timeline.rec = { phase: counting ? 'count' : 'rec', count, level: hum.mic ? hum.mic.level() : 0 };
-  const text = counting ? 'COUNT-IN' : `LISTENING · BAR ${bar} OF 4 · ESC TO CANCEL`;
+  const text = counting ? `COUNT-IN · ${count}` : `LISTENING · BAR ${bar} OF 4 · ESC CANCELS`;
   if (text !== hum.shown) {
     hum.shown = text;
     timeline.setStatus(text);
@@ -721,6 +847,9 @@ const timer = new THREE.Timer();
 const up = new THREE.Vector3();
 const right = new THREE.Vector3();
 const qStep = new THREE.Quaternion();
+const orbitAxis = new THREE.Vector3();
+
+let lastT = now();
 
 function frame(stamp) {
   timer.update(stamp);
@@ -733,8 +862,16 @@ function frame(stamp) {
   stage.rotation.z = Math.sin(wall * 0.23) * 0.018;
 
   if (state.mode === 'touch') {
-    // Momentum decays toward a slow auto-spin, about axes fixed to the camera.
-    if (!pointer.down) spin.vel.lerp(spin.auto, 1 - Math.exp(-dt * 1.2));
+    // The block turns about the orbit's axis at the indicator's speed, the other way round — so a
+    // still pointer meets the cubes in the same order, at the same tempo, as the indicator does.
+    orbitAxis.set(0, 1, 0).applyQuaternion(ORBIT_TILT);
+    // Timed on the audio clock, unclamped, so the turn stays locked to the tempo even if frames drop.
+    const turn = (-2 * Math.PI * Math.min(0.5, Math.max(0, t - lastT))) / transport.orbitSec();
+    blockTurn += turn;
+    qStep.setFromAxisAngle(orbitAxis, turn);
+    cluster.quaternion.premultiply(qStep);
+    // A drag adds its own spin about the camera's axes, which dies away after release.
+    if (!pointer.down) spin.vel.multiplyScalar(Math.exp(-dt * 1.5));
     up.setFromMatrixColumn(camera.matrixWorld, 1);
     right.setFromMatrixColumn(camera.matrixWorld, 0);
     qStep.setFromAxisAngle(up, spin.vel.y * dt);
@@ -745,6 +882,16 @@ function frame(stamp) {
   } else {
     // Back to the orbit's frame, so each cube is where its step says it is.
     cluster.quaternion.slerp(new THREE.Quaternion(), 1 - Math.exp(-dt * 3));
+  }
+
+  // Touch runs every frame at the pointer's last position, so a still pointer still plays.
+  pointer.speed *= Math.exp(-dt * 6);
+  if (world && pointer.inside && !pointer.down) {
+    if (state.mode === 'touch') readAt(pointer.lastX, pointer.lastY, t);
+    else touchAt(pointer.lastX, pointer.lastY);
+  } else {
+    reader.phi = null;
+    reader.anchor = null;
   }
 
   if (world) {
@@ -766,6 +913,7 @@ function frame(stamp) {
 
   if (state.mode === 'orbit') controls.update();
   composer.render();
+  lastT = t;
   requestAnimationFrame(frame);
 }
 
@@ -780,4 +928,4 @@ refreshUi();
 requestAnimationFrame(frame);
 
 // For poking at it from the console.
-window.volum3 = { state, act, transport, timeline, get world() { return world; }, get pattern() { return pattern; } };
+window.volum3 = { state, act, transport, timeline, debug, get world() { return world; }, get pattern() { return pattern; } };
