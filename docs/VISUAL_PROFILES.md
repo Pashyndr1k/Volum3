@@ -68,7 +68,7 @@ The background stays black; each profile only tints it slightly toward its darke
 **How the looks use it.**
 * **PAINTED**: every cube wears its part's colour with its pattern in the profile's ink. A struck
   cube glows and warms toward `peak`.
-* **DARK**: cubes rest in `rest`, and their pattern is barely lighter, so there's no colour at
+* **DARK**: cubes rest in `rest` (lifted 7 % toward white, so the block reads), and their pattern is barely lighter, so there's no colour at
   all. A struck cube lights up in a boosted version of its part colour, and its pattern takes its
   ink as it lights. The further it's thrown, the closer it gets to `peak`. Near-neutral palettes
   (BONE, PRISM) aren't saturated further.
@@ -87,17 +87,15 @@ Switch with **X** or TEXTURE in the top menu; the URL keeps `texture=`. Every se
 mark per face, centred and **larger than the face**, so the face's edges crop it into a
 supergraphic, the way the posters use it.
 
-![texture sets: MACRO and MACRO TYPE](img/texture-sets.jpg)
+![texture set: MACRO](img/texture-sets.jpg)
 
 | Set | What each part gets | From |
 |---|---|---|
 | NONE | plain cubes | — |
 | MACRO | kick: a target running off the face · snare: an X larger than the face · hat: one big dot · open: a ring touching the edges · perc: a checker cut to a few cells · bass: wide bars · chord: a plus sign larger than the face · melody: broad hatching · no note: a hairline frame | p07, p16, p17 |
-| MACRO TYPE | **oversized letters and numbers** at 1.8× the face, cropped by it: the part's letter on the sides (K S H O P B C M); on top, the beat a drum lands on (1–4) or the scale degree a tuned part plays (1–7) | c09, p02 |
 
 All marks are drawn in the cube shader (`src/cubes.js`), so they stay sharp at any distance, and
-they swell when a cube is struck: dots grow, lines and letters get bolder, checkers fill in.
-Letters come from an atlas drawn once on a canvas in DM Mono.
+they swell when a cube is struck: dots grow, lines get bolder, checkers fill in.
 
 ## Shader styles (`src/styles.js`)
 
@@ -108,22 +106,24 @@ block looks plain; the effect blooms out of it with every hit, strongest on the 
 furthest. The indicator, always far out on its orbit, always carries it, and flares on the beat.
 Switch with **S** or SHADER; the URL keeps `shader=`.
 
-![shader styles: CLEAN, PRISM, GLITCH / HALFTONE, DITHER, in the DARK look](img/shader-styles.jpg)
+![shader styles: CLEAN, FLAT, PRISM / GLITCH, GLASS, DITHER, in the DARK look](img/shader-styles.jpg)
 
 | Style | What it does | From |
 |---|---|---|
-| CLEAN | plain cubes | — |
-| PRISM | **Splits white light into its spectrum, radiating from the block's centre.** Every thrown cube casts six spectral copies of itself out along *its own* line from the centre, red nearest and violet furthest, so the rainbows fan out in every direction at once. Its surface carries rainbow bands running outward from the centre, strongest on the faces turned away from it. | c13, p19 |
+| CLEAN | plain lit cubes | — |
+| FLAT | **No light and no shade.** Every face is one flat colour: grey at rest, its part's colour while struck, white when thrown furthest, with a thin darker line round each face so the cubes still read. It works this way in both looks. | — |
+| PRISM | **Splits white light into its spectrum, radiating from the block's centre.** Every thrown cube casts six spectral copies of itself out along *its own* line from the centre, red nearest and violet furthest, so the rainbows fan out in every direction at once. Its surface carries faint rainbow bands running outward from the centre. | c13, p19 |
 | GLITCH | **A damaged digital signal on each cube.** Its face is torn into slices shifted sideways, its print split R / B across the tear, its colours rotated in torn rows, and sometimes it drops to coarse blocks. A red and a cyan copy of it jump about its line from the centre in torn scanlines. Bursts come at random and on every kick and snare. | p14, p19, c27 |
-| HALFTONE | the cube's own shading redrawn as rotated red, green and blue dot screens on its faces | c06, c12, c29 |
+| GLASS | **One kind of cube becomes clear glass** — the part whose share of the block is nearest an eighth, 10–15 % of the cubes. It is three.js's physically based transmission: the block behind is refracted through each cube (IOR 1.5, over its thickness) and split by dispersion, with a soft studio reflected in its faces. Struck, the glass takes its part's colour and glows from inside. The other cubes stay as in CLEAN. | c13 |
 | DITHER | the cube's shading as an ordered 4 × 4 dither per channel on coarse screen pixels: eight colours | p04, the flower video |
 
 How it works: each cube carries its strength in an instance attribute, set every frame from its
 displacement (`smoothstep(0.12, reach, offset)`, with `reach` the throw a hard hit gives at the
 current FORCE). The surface part runs in the cube shader. The copies are extra draws of the same
 instanced geometry and matrices, additive and pushed along each cube's radial direction by its
-strength, so they move and turn with it. The styles combine freely with the colour profiles,
-the texture sets and both looks.
+strength, so they move and turn with it. GLASS moves its cubes from the main instanced mesh
+into one of their own with a `MeshPhysicalMaterial` (`transmission` 1). The styles combine freely
+with the colour profiles, the texture sets and both looks.
 
 ## The indicator
 
@@ -131,14 +131,20 @@ The indicator is a cube like the block's own (same rounded shape and shader, so 
 on it) burning white, with a white halo and light, in every profile. Only the orbit ring, trail
 and touch circle take the profile's accent.
 
+## The logo
+
+The VOLUM3 logo is filled with a gradient through the current profile's eight part colours,
+stretched so wide that only two or three of them are on the word at once, drifting slowly back
+and forth (24 s each way).
+
 ## Adding a profile
 
 Add an entry to `PROFILES` in `src/profiles.js`: 8 part colours, an ink (one colour, or one per
 part), `rest`, `idle`, `peak`, `accent`, `marks` (`'lane'` or a list of colours), `material`
 (`roughness`, `metalness`, `iridescence` 0/1) and `fx` (`bloom` [strength, radius, threshold],
 `glow`, `fringe`, `grain`). It will appear in the PROFILE switch. To add a texture set, add an entry to `TEXTURE_SETS` in `src/textures.js`: a `{ pattern, density,
-fit: true, scale? }` for each part and for `idle` (density below 1 makes the mark larger than the
-face; `scale` sizes glyphs). To add a new pattern, add a branch to `patternMask` in
+fit: true }` for each part and for `idle` (density below 1 makes the mark larger than the face).
+To add a new pattern, add a branch to `patternMask` in
 `src/cubes.js` and give it an id in `PATTERNS`. To add a shader style, add an entry to `STYLES` in
-`src/styles.js` and its branch to the cube shader in `src/cubes.js` (by the index of `uStyle`);
+`src/styles.js` and its branch to the cube shader in `src/cubes.js` (test it with `styleIs(ST_<ID>)`);
 copies thrown along the radial direction go in `Ghosts`.

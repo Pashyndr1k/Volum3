@@ -28,6 +28,8 @@ const KEYS = [
   ['?', 'these keys'],
 ];
 
+const LOGO_DRIFT = 24; // seconds for the logo's gradient to cross once (it then comes back)
+
 export function renderPanel(el, state, act, logoColors = []) {
   el.innerHTML = '';
   const block = (title) => {
@@ -88,15 +90,20 @@ export function renderPanel(el, state, act, logoColors = []) {
     parent.append(box);
   };
 
-  // The logo, one letter per colour of the current profile.
+  /*
+    The logo: a gradient through the current profile's colours, stretched so wide that only two
+    or three of them are on the word at once, drifting slowly back and forth. The panel is
+    rebuilt on every change, so the drift is set to where the clock says it is, not restarted.
+  */
   const brand = document.createElement('span');
   brand.className = 'brand';
-  [...'VOLUM3'].forEach((ch, k) => {
-    const l = document.createElement('span');
-    l.textContent = ch;
-    if (logoColors.length) l.style.color = logoColors[k % logoColors.length];
-    brand.append(l);
-  });
+  brand.textContent = 'VOLUM3';
+  if (logoColors.length) {
+    const stops = [...logoColors, logoColors[0]];
+    brand.style.backgroundImage = `linear-gradient(90deg, ${stops.join(', ')})`;
+    brand.style.backgroundSize = `${Math.round(((stops.length - 1) / 1.6) * 100)}% 100%`;
+    brand.style.animationDelay = `${-((performance.now() / 1000) % (LOGO_DRIFT * 2))}s`;
+  }
   el.append(brand);
 
   const look = block('LOOK');

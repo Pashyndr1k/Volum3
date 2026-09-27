@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
@@ -13,7 +14,7 @@ import { Timeline } from './timeline.js';
 import { openMic, analyzeHum, humToMelody } from './hum.js';
 import { INK } from './palette.js';
 import { PROFILES, PROFILE, VOICE_LANE, inkFor } from './profiles.js';
-import { TEXTURE_SETS, TEXTURE_SET, PATTERNS, LANE_LETTER, GLYPHS, glyphIndex, buildGlyphAtlas } from './textures.js';
+import { TEXTURE_SETS, TEXTURE_SET, PATTERNS } from './textures.js';
 import { STYLES as SHADER_STYLES, setStyle, updateStyle } from './styles.js';
 import { createFxPass } from './fxpass.js';
 import { ClusterPhysics, TUNING } from './physics.js';
@@ -145,6 +146,9 @@ scene.add(key);
 const rim = new THREE.DirectionalLight(0x9fc4ff, 0.55);
 rim.position.set(-10, -3, -8);
 scene.add(rim);
+
+// GLASS cubes reflect a soft studio; nothing else uses it.
+const glassEnv = new THREE.PMREMGenerator(renderer).fromScene(new RoomEnvironment(), 0.04).texture;
 
 const composer = new EffectComposer(renderer);
 composer.addPass(new RenderPass(scene, camera));
@@ -375,45 +379,40 @@ function dressCubes() {
   cubes.setColors(pieces.map((_, i) => colorOf(mapping, i)));
   world.vivid = vividColors(world);
   world.ink = pieces.map((_, i) => new THREE.Color(inkFor(pr, laneOf(mapping, i) ?? 'kick')));
-  world.restInk = new THREE.Color(pr.rest).lerp(new THREE.Color('#ffffff'), 0.08);
-  world.rest = new THREE.Color(pr.rest);
+  // DARK's resting cubes: the profile's near-black, lifted a little so the block reads.
+  world.rest = new THREE.Color(pr.rest).lerp(new THREE.Color('#ffffff'), 0.07);
+  world.restInk = world.rest.clone().lerp(new THREE.Color('#ffffff'), 0.08);
+  // FLAT has no light to show the block's form, so its resting grey is lighter still.
+  world.flatRest = new THREE.Color(pr.rest).lerp(new THREE.Color('#a4a39e'), 0.36);
+  world.flatInk = world.flatRest.clone().lerp(new THREE.Color('#ffffff'), 0.12);
   cubes.setPatterns(pieces.map((_, i) => textureSpec(i)), world.ink);
-  if (atlas) cubes.setAtlas(atlas.texture);
+  cubes.setGlass(glassCubes(), glassEnv);
   cubes.setLook({ ...pr.material, peak: pr.peak, texture: state.textureSet !== 'none', emit: pr.fx.glow });
   if (state.look === 'dark') cubes.restore();
 }
 
 /*
-  What the current texture set prints on cube i: the pattern and scale for its part, and for the
-  type sets its two glyphs — the part's letter for the sides, and a number for the top: the beat
-  a drum lands on (1–4), or the scale degree a tuned part plays (1–7).
+  GLASS turns one kind of cube to glass: the part whose share of the block is nearest an eighth,
+  so 10–15 % of it (trimmed or topped up with cubes that have no note if no part is close).
 */
-function textureSpec(i) {
-  const lane = laneOf(world.mapping, i);
-  const spec = TEXTURE_SET.get(state.textureSet).lanes[lane ?? 'idle'];
-  const ev = world.mapping.cubeEvents[i][0];
-  let number = world.pieces[i].step % 10;
-  if (ev && ev.midi !== undefined) {
-    const deg = SCALES[pattern.scale].indexOf((((ev.midi - pattern.root) % 12) + 12) % 12);
-    if (deg >= 0) number = deg + 1;
-  } else if (ev) number = Math.floor((ev.step % 16) / 4) + 1;
-  const letter = LANE_LETTER[lane] ?? GLYPHS[(i * 7) % 26];
-  return {
-    pattern: PATTERNS[spec.pattern],
-    density: spec.fit ? -spec.density : spec.density,
-    fill: spec.scale ?? spec.fill ?? 0, // for glyphs: the letter's size against the face
-    glyph: [glyphIndex(letter), glyphIndex(String(number))],
-  };
+function glassCubes() {
+  const n = world.pieces.length;
+  const byLane = {};
+  world.pieces.forEach((_, i) => (byLane[laneOf(world.mapping, i) ?? 'idle'] ??= []).push(i));
+  const lanes = Object.entries(byLane).filter(([l]) => l !== 'idle');
+  lanes.sort((a, b) => Math.abs(a[1].length / n - 0.125) - Math.abs(b[1].length / n - 0.125));
+  const pick = [...(lanes[0]?.[1] ?? [])];
+  const lo = Math.ceil(n * 0.1);
+  const hi = Math.floor(n * 0.15);
+  for (const i of byLane.idle ?? []) if (pick.length < lo) pick.push(i);
+  return pick.slice(0, hi);
 }
 
-// The glyph atlas is drawn once the type face has loaded, so the letters are in it.
-let atlas = null;
-(document.fonts?.load('500 100px "DM Mono"') ?? Promise.resolve())
-  .catch(() => {})
-  .then(() => {
-    atlas = buildGlyphAtlas();
-    world?.cubes.setAtlas(atlas.texture);
-  });
+// What the current texture set prints on cube i: the pattern and scale for its part.
+function textureSpec(i) {
+  const spec = TEXTURE_SET.get(state.textureSet).lanes[laneOf(world.mapping, i) ?? 'idle'];
+  return { pattern: PATTERNS[spec.pattern], density: spec.fit ? -spec.density : spec.density };
+}
 
 // The rest of the frame for the current profile: background, light, bloom, fringe, grain.
 function applyProfile() {
@@ -830,6 +829,8 @@ const act = {
     const ids = SHADER_STYLES.map((st) => st.id);
     state.shader = ids[(ids.indexOf(state.shader) + 1) % ids.length];
     setStyle(state.shader);
+    // Leaving FLAT in the painted look: put the painted colours back.
+    if (world && state.look === 'painted' && state.shader !== 'flat') world.cubes.restore();
     syncUrl();
     refreshUi();
   },
@@ -915,7 +916,7 @@ const act = {
 // cubes are when they light, so the logo reads as the block does.
 function logoColors() {
   const pr = profile();
-  const lanes = ['kick', 'snare', 'hat', 'bass', 'chord', 'melody'].map((l) => new THREE.Color(pr.lanes[l]));
+  const lanes = ['kick', 'snare', 'hat', 'open', 'perc', 'bass', 'chord', 'melody'].map((l) => new THREE.Color(pr.lanes[l]));
   const hsl = {};
   return lanes.map((c) => {
     c.getHSL(hsl);
@@ -1140,7 +1141,11 @@ function frame(stamp) {
     world.physics.advance(dt);
     const { heat, glow, white, fx, physics, display, vivid, rest, ink, restInk } = world;
     const decay = Math.exp(-dt / HEAT_TAU);
-    const dark = state.look === 'dark';
+    // FLAT draws every cube grey at rest and coloured when struck, as DARK does, in either look.
+    const flat = state.shader === 'flat';
+    const dark = state.look === 'dark' || flat;
+    const restC = flat ? world.flatRest : rest;
+    const restInkC = flat ? world.flatInk : restInk;
     // How far a hard hit usually throws a cube at this FORCE; DARK is fully white out there.
     const reach = 0.6 + 0.35 * FORCE_MULT[state.force - 1];
     for (let i = 0; i < heat.length; i++) {
@@ -1153,9 +1158,9 @@ function frame(stamp) {
         // it is thrown from its place in the block the closer it gets to white.
         // Small wobbles from a neighbour's hit don't count; only a real strike or throw lights it.
         const active = Math.min(1, heat[i] * 1.1 + Math.max(0, off - 0.2) * 0.6);
-        display[i].copy(rest).lerp(vivid[i], active);
+        display[i].copy(restC).lerp(vivid[i], active);
         // The pattern is there at rest, faint and colourless; it takes its ink as the cube lights.
-        tmpC.copy(restInk).lerp(ink[i], active);
+        tmpC.copy(restInkC).lerp(ink[i], active);
         world.cubes.setInk(i, tmpC);
         white[i] = smoothstep(0.5, reach, off);
         glow[i] = active * 0.4 + white[i] * 0.4;

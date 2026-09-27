@@ -3,12 +3,14 @@ import * as THREE from 'three';
 /*
   Shader styles: how the cubes and the indicator are drawn, chosen like a colour profile. A
   style lives on each cube, not on the frame: the background, the orbit, the trail and the marks
-  stay clean. Its strength is per cube — 0 while a cube sits in its place in the block,
-  rising to 1 as it is thrown to its furthest (`aState.z`) — so a resting block looks plain and the effect
-  blooms out of it with every hit, strongest on the cubes that fly furthest. The indicator
-  always carries it.
+  stay clean. Its strength is per cube — 0 while a cube sits in its place in the block, rising
+  to 1 as it is thrown to its furthest (\`aState.z\`) — so a resting block looks plain and the
+  effect blooms out of it with every hit, strongest on the cubes that fly furthest. The
+  indicator always carries it.
 
-    CLEAN     plain cubes
+    CLEAN     plain lit cubes
+    FLAT      no light and no shade: every face one flat colour, grey at rest and its part's
+              colour while struck, with a thin dark line round each face so the cubes read.
     PRISM     white light split into its spectrum, from the block's centre outward: the surface
               carries rainbow bands running out from the centre, and every thrown cube casts a
               fan of spectral copies of itself along its own line from the centre — red nearest,
@@ -16,23 +18,28 @@ import * as THREE from 'three';
     GLITCH    a damaged digital signal on each cube: its face torn into sideways-shifted slices,
               its print split R / B, its colours rotated in torn rows, scanlines, and a red and a
               cyan copy of it jumping about its line from the centre in bursts. p14, p19, c27.
-    HALFTONE  the cube's own shading re-drawn as rotated red, green and blue dot screens on its
-              faces. c06, c12, c29.
+    GLASS     one kind of cube (one part, 10–15 % of the block) turns to clear glass: a
+              physically based transmission material that refracts the block behind it (IOR
+              1.5, thickness, spectral dispersion), tinted with its part's colour as it lights.
     DITHER    the cube's shading as ordered 4 × 4 dither per channel on a coarse pixel grid —
               eight colours. p04, the flower video.
 
-  The surface part is in the cube shader (`src/cubes.js`); the copies are `Ghosts` below, drawn
-  from the same instanced geometry, so each cube's copies move and turn with it.
+  The surface part is in the cube shader (\`src/cubes.js\`); the copies are \`Ghosts\` below, drawn
+  from the same instanced geometry, so each cube's copies move and turn with it. The glass is
+  its own instanced mesh (\`Glass\` in cubes.js).
 */
 
 export const STYLES = [
   { id: 'clean', label: 'CLEAN' },
+  { id: 'flat', label: 'FLAT' },
   { id: 'prism', label: 'PRISM' },
   { id: 'glitch', label: 'GLITCH' },
-  { id: 'halftone', label: 'HALFTONE' },
+  { id: 'glass', label: 'GLASS' },
   { id: 'dither', label: 'DITHER' },
 ];
 export const STYLE_INDEX = Object.fromEntries(STYLES.map((s, i) => [s.id, i]));
+// Each style's index as a GLSL constant (ST_FLAT, ST_PRISM, …), and a test for the current one.
+const STYLE_DEFINES = STYLES.map((s, i) => `#define ST_${s.id.toUpperCase()} ${i}.0`).join('\n');
 
 // Shared by every cube material and every ghost: which style, the clock and the beat pulse.
 export const STYLE_UNIFORMS = {
@@ -53,7 +60,9 @@ export function updateStyle(time, pulse, pixelRatio, height) {
 }
 
 export const STYLE_GLSL = /* glsl */ `
+${STYLE_DEFINES}
 uniform float uStyle;
+bool styleIs(float s) { return abs(uStyle - s) < 0.5; }
 uniform float uPulse;
 uniform float uPx;
 vec3 spectrum(float t) { // red → violet across 0…1
@@ -71,6 +80,7 @@ float styleHash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 4375
 const PRISM_BANDS = 6;
 
 const GHOST_VERT = /* glsl */ `
+  ${STYLE_DEFINES}
   attribute vec3 aState; // glow, white, fx
   attribute vec4 aSpec; // …, seed
   uniform vec3 uCentre;
@@ -92,9 +102,9 @@ const GHOST_VERT = /* glsl */ `
     float fx = aState.z;
     float aSeed = aSpec.w;
     vAlpha = fx * (0.45 + 0.9 * min(1.0, aState.x + uPulse * 0.4));
-    if (uStyle < 1.5) {
+    if (abs(uStyle - ST_PRISM) < 0.5) {
       // PRISM: out along the cube's own line from the centre, the further bands further out.
-      p.xyz += rad * fx * uSpread * (0.2 + 0.8 * uBand) * (1.0 + 0.35 * uPulse);
+      p.xyz += rad * fx * uSpread * 0.5 * (0.2 + 0.8 * uBand) * (1.0 + 0.35 * uPulse);
     } else {
       // GLITCH: the copy jumps about in bursts, along the line from the centre and across it.
       float t = floor(uTime * 12.0 + aSeed);
@@ -112,6 +122,7 @@ const GHOST_VERT = /* glsl */ `
   }`;
 
 const GHOST_FRAG = /* glsl */ `
+  ${STYLE_DEFINES}
   uniform vec3 uColor;
   uniform float uGain;
   uniform float uStyle;
@@ -123,7 +134,7 @@ const GHOST_FRAG = /* glsl */ `
     if (vAlpha < 0.003) discard;
     // Mostly at the silhouette, so the copies read as coloured edges, not a wash of light.
     float a = vAlpha * uGain * (0.15 + 0.85 * pow(1.0 - vFacing, 1.5));
-    if (uStyle > 1.5) {
+    if (abs(uStyle - ST_GLITCH) < 0.5) {
       // GLITCH copies arrive in torn horizontal rows, with scanlines.
       float row = floor(gl_FragCoord.y / 6.0);
       a *= step(0.35, gh(vec2(row, floor(uTime * 14.0)))) * (0.75 + 0.25 * sin(gl_FragCoord.y * 3.14159));

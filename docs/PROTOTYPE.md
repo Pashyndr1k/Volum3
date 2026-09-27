@@ -22,7 +22,7 @@ Click anywhere once to enable sound, since browsers block audio until the page g
 
 **A fresh page opens** in DARK with the PRISM colours, no texture, the CLEAN shader, ZONE 1, FORCE 4, SPIN 4, RETURN 2, MARKS 4 and CAVES 3 (`DEFAULTS` in `src/main.js`). The URL only records settings that differ from these.
 
-**The top** is centred: the VOLUM3 logo (its letters in the current colour profile's colours) and three groups of settings, LOOK (painted/dark, colour, texture, shader), MOTION and BLOCK; under them, a large PLAY / STOP and the ORBIT / TOUCH switch. The tempo (BPM) sits in the timeline's header. Choices are one word that cycles on click; levels are small meters (click a cell).
+**The top** is centred: the VOLUM3 logo (a slow gradient through the current colour profile's colours) and three groups of settings, LOOK (painted/dark, colour, texture, shader), MOTION and BLOCK; under them, a large PLAY / STOP and the ORBIT / TOUCH switch. The tempo (BPM) sits in the timeline's header. Choices are one word that cycles on click; levels are small meters (click a cell).
 
 **PLAY and LOOK**
 
@@ -75,8 +75,8 @@ is in the colour its cubes take. The playhead is the indicator's angle.
 | **V** / LOOK PAINTED | Every cube wears its part's colour; cubes with no note are dark |
 | **V** / LOOK DARK | Every cube is dark grey and colourless at rest. Struck, it lights up in a vivid version of its colour; the further it is thrown from its place in the block, the closer it gets to white (fully white at a hard hit's usual reach for the current FORCE). Small wobbles from a neighbour's hit leave it grey. |
 | **P** / PROFILE | Cycle the colour profiles built from the reference boards: HALFOF8, DOPAMINE, FJORD, CANDY, AFTERGLOW, RISO, BONE, PRISM. See [VISUAL_PROFILES.md](VISUAL_PROFILES.md). |
-| **X** / TEXTURE | Texture set: NONE, MACRO (oversized marks cropped by the face), MACRO TYPE (oversized letters and numbers) |
-| **S** / SHADER | Shader style on the cubes and the indicator, strongest on the cubes thrown furthest: CLEAN, PRISM (a rainbow radiating out from the centre), GLITCH (digital signal damage), HALFTONE, DITHER |
+| **X** / TEXTURE | Texture set: NONE, or MACRO (oversized marks cropped by the face) |
+| **S** / SHADER | Shader style on the cubes and the indicator, strongest on the cubes thrown furthest: CLEAN, FLAT (unlit flat colour, grey until struck), PRISM (a rainbow radiating out from the centre), GLITCH (digital signal damage), GLASS (10–15 % of the cubes turn to refracting glass), DITHER |
 | **?** | Show the keyboard shortcuts |
 
 The URL keeps `style` and `pattern`, so a link brings back the same groove.

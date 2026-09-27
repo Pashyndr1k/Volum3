@@ -51,8 +51,21 @@ body {
   letter-spacing: 0.05em;
   text-transform: uppercase;
 }
-#panel .brand { font-weight: 500; margin-right: 14px; letter-spacing: 0.12em; }
-#panel .brand span { transition: color 0.4s; }
+#panel .brand {
+  font-weight: 500;
+  margin-right: 14px;
+  letter-spacing: 0.12em;
+  color: var(--ink);
+  background-repeat: no-repeat;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: logo-drift 24s ease-in-out infinite alternate;
+}
+@keyframes logo-drift {
+  from { background-position: 0% 0; }
+  to { background-position: 100% 0; }
+}
 #panel .block {
   display: inline-flex;
   align-items: center;
