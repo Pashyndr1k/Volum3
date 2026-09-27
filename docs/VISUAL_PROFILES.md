@@ -92,7 +92,7 @@ supergraphic, the way the posters use it.
 | Set | What each part gets | From |
 |---|---|---|
 | NONE | plain cubes | — |
-| MACRO (default) | kick: a target running off the face · snare: an X larger than the face · hat: one big dot · open: a ring touching the edges · perc: a checker cut to a few cells · bass: wide bars · chord: a plus sign larger than the face · melody: broad hatching · no note: a hairline frame | p07, p16, p17 |
+| MACRO | kick: a target running off the face · snare: an X larger than the face · hat: one big dot · open: a ring touching the edges · perc: a checker cut to a few cells · bass: wide bars · chord: a plus sign larger than the face · melody: broad hatching · no note: a hairline frame | p07, p16, p17 |
 | MACRO TYPE | **oversized letters and numbers** at 1.8× the face, cropped by it: the part's letter on the sides (K S H O P B C M); on top, the beat a drum lands on (1–4) or the scale degree a tuned part plays (1–7) | c09, p02 |
 
 All marks are drawn in the cube shader (`src/cubes.js`), so they stay sharp at any distance, and

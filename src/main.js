@@ -49,21 +49,35 @@ const SPIN_KICK = [0, 3, 6, 10, 15]; // SPIN 0…4: rad/s about a random axis
 const LOOSENESS = [0.3, 0.55, 1, 1.7, 2.8]; // RETURN 1…5: slow and floaty → quick and tight
 const OUTWARD = 0.75; // how much of every push points away from the block's centre
 
+// What a fresh page opens with; the URL only records settings that differ from these.
+const DEFAULTS = {
+  look: 'dark',
+  profile: 'prism',
+  textureSet: 'none',
+  shader: 'clean',
+  grain: 4,
+  zone: 1,
+  force: 4,
+  spin: 4,
+  ret: 2,
+  caves: 3,
+};
+
 const state = {
   seed: intParam('seed', 0, 2147483647, randomSeed()),
   mode: params.get('mode') === 'touch' ? 'touch' : 'orbit',
   bpm: intParam('bpm', 50, 180, 100),
-  grain: intParam('grain', 1, 5, 3),
-  zone: intParam('zone', 0, 4, 1),
-  force: intParam('force', 1, 5, 3),
-  spin: intParam('spin', 0, 4, 2),
-  ret: intParam('return', 1, 5, 3),
-  caves: intParam('caves', 1, 3, 2),
+  grain: intParam('grain', 1, 5, DEFAULTS.grain),
+  zone: intParam('zone', 0, 4, DEFAULTS.zone),
+  force: intParam('force', 1, 5, DEFAULTS.force),
+  spin: intParam('spin', 0, 4, DEFAULTS.spin),
+  ret: intParam('return', 1, 5, DEFAULTS.ret),
+  caves: intParam('caves', 1, 3, DEFAULTS.caves),
   timeline: params.get('timeline') !== '0',
-  look: params.get('look') === 'dark' ? 'dark' : 'painted',
-  profile: PROFILE.has(params.get('profile')) ? params.get('profile') : 'halfof8',
-  textureSet: TEXTURE_SET.has(params.get('texture')) ? params.get('texture') : params.get('texture') === '0' ? 'none' : 'macro',
-  shader: SHADER_STYLES.some((st) => st.id === params.get('shader')) ? params.get('shader') : 'clean',
+  look: ['dark', 'painted'].includes(params.get('look')) ? params.get('look') : DEFAULTS.look,
+  profile: PROFILE.has(params.get('profile')) ? params.get('profile') : DEFAULTS.profile,
+  textureSet: TEXTURE_SET.has(params.get('texture')) ? params.get('texture') : params.get('texture') === '0' ? 'none' : DEFAULTS.textureSet,
+  shader: SHADER_STYLES.some((st) => st.id === params.get('shader')) ? params.get('shader') : DEFAULTS.shader,
   keys: false,
   playing: false,
   unlocked: false,
@@ -90,16 +104,16 @@ function syncUrl() {
   }
   if (state.bpm !== pattern.naturalBpm) q.set('bpm', String(state.bpm));
   if (!state.timeline) q.set('timeline', '0');
-  if (state.look !== 'painted') q.set('look', state.look);
-  if (state.profile !== 'halfof8') q.set('profile', state.profile);
-  if (state.textureSet !== 'macro') q.set('texture', state.textureSet);
-  if (state.shader !== 'clean') q.set('shader', state.shader);
-  if (state.grain !== 3) q.set('grain', String(state.grain));
-  if (state.zone !== 1) q.set('zone', String(state.zone));
-  if (state.force !== 3) q.set('force', String(state.force));
-  if (state.spin !== 2) q.set('spin', String(state.spin));
-  if (state.ret !== 3) q.set('return', String(state.ret));
-  if (state.caves !== 2) q.set('caves', String(state.caves));
+  if (state.look !== DEFAULTS.look) q.set('look', state.look);
+  if (state.profile !== DEFAULTS.profile) q.set('profile', state.profile);
+  if (state.textureSet !== DEFAULTS.textureSet) q.set('texture', state.textureSet);
+  if (state.shader !== DEFAULTS.shader) q.set('shader', state.shader);
+  if (state.grain !== DEFAULTS.grain) q.set('grain', String(state.grain));
+  if (state.zone !== DEFAULTS.zone) q.set('zone', String(state.zone));
+  if (state.force !== DEFAULTS.force) q.set('force', String(state.force));
+  if (state.spin !== DEFAULTS.spin) q.set('spin', String(state.spin));
+  if (state.ret !== DEFAULTS.ret) q.set('return', String(state.ret));
+  if (state.caves !== DEFAULTS.caves) q.set('caves', String(state.caves));
   history.replaceState(null, '', `${location.pathname}?${q}`);
 }
 

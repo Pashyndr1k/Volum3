@@ -20,6 +20,8 @@ Or by hand: `npm install`, then `npm run dev`, and open http://localhost:5173.
 
 Click anywhere once to enable sound, since browsers block audio until the page gets a gesture.
 
+**A fresh page opens** in DARK with the PRISM colours, no texture, the CLEAN shader, ZONE 1, FORCE 4, SPIN 4, RETURN 2, MARKS 4 and CAVES 3 (`DEFAULTS` in `src/main.js`). The URL only records settings that differ from these.
+
 **The top menu** is four groups: PLAY (play, tempo, orbit/touch), LOOK (painted/dark, colour, texture, shader), MOTION and BLOCK. Choices are one word that cycles on click; levels are small meters (click a cell).
 
 **PLAY and LOOK**
@@ -41,8 +43,8 @@ Click anywhere once to enable sound, since browsers block audio until the page g
 | Control | Levels | What it does |
 |---|---|---|
 | ZONE | 0–4 | Touch radius: 0 = only the cube under the pointer; then 1.2, 2, 3 and 4.2 cube-widths. Every cube inside is thrown at the same moment, harder near the centre, but only the touched cube sounds and throws marks. One touch, one trigger. |
-| FORCE | 1–5 | Impulse ×1, ×2, ×3.5, ×5, ×7. At the default (3) a small cube flies about 1.4 units out. At 5 it's about 2.9. |
-| SPIN | 0–4 | Random-axis spin kick of 0, 3, 6, 10 or 15 rad/s. Small cubes turn about 6° at 0, 14° at the default (2) and 21° at 4. Big cubes turn less. |
+| FORCE | 1–5 | Impulse ×1, ×2, ×3.5, ×5, ×7. At 3 a small cube flies about 1.4 units out. At 5 it's about 2.9. |
+| SPIN | 0–4 | Random-axis spin kick of 0, 3, 6, 10 or 15 rad/s. Small cubes turn about 6° at 0, 14° at 2 and 21° at 4. Big cubes turn less. |
 | RETURN | 1–5 | Anchor stiffness ×0.3 … ×2.8. 1 is slow and floaty, and drags neighbours along. 5 is quick and tight. |
 | CAVES | 1–3 | How hollow the block is (it rebuilds): core size, number of tunnels and pockets |
 
