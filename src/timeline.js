@@ -82,9 +82,11 @@ export class Timeline {
       if (onClick) s.addEventListener('click', onClick);
       this.head.append(s);
     };
-    const style = STYLES.find((s) => s.id === p?.style);
-    word(style ? style.label : 'HUMMED', 'word on', () => this.h.onNextStyle(), 'Next style (a new pattern in it)');
-    word('NEW', 'word on', () => this.h.onRandom(), 'A new rhythm and melody in this style');
+    const hummed = p?.style === 'hum';
+    const style = STYLES.find((s) => s.id === (hummed ? p.accomp : p?.style));
+    const label = style ? style.label : '';
+    word(hummed ? `HUM + ${label}` : label, 'word on', () => this.h.onNextStyle(), hummed ? 'Re-arrange the band around your melody in the next style' : 'Next style (a new pattern in it)');
+    word('NEW', 'word on', () => this.h.onRandom(), hummed ? 'A new band around your melody, same style' : 'A new rhythm and melody in this style');
     word(this.rec ? 'STOP' : 'HUM', `word ${this.rec ? 'rec' : 'on'}`, () => this.h.onHum(), 'Hum a melody: one bar count-in, then four bars');
     word('PRESET', 'word dim', () => this.h.onPreset(), 'Back to the default groove');
     const info = this.status || (p ? `${NOTE_NAMES[p.root]} ${p.scale === 'major' ? 'MAJOR' : p.scale === 'minor' ? 'MINOR' : p.scale.toUpperCase()}` : '');

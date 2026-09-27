@@ -63,6 +63,11 @@ its cubes take. The playhead is the indicator's angle.
 | Click a lane letter | Mute or unmute the lane |
 | **L** / TIMELINE | Hide or show the frame |
 
+| Look | |
+|---|---|
+| **V** / LOOK PAINTED | Every cube wears its part's colour; cubes with no note are dark |
+| **V** / LOOK DARK | Every cube is dark grey and colourless at rest. Struck, it lights up in a vivid version of its colour; the further it is thrown from its place in the block, the closer it gets to white (fully white at a hard hit's usual reach for the current FORCE). Small wobbles from a neighbour's hit leave it grey. |
+
 The URL keeps `style` and `pattern`, so a link brings back the same groove.
 
 **How a pattern is made** (`src/patterns.js`). Each style is a probability grid per drum lane
@@ -87,9 +92,23 @@ Press **H** (or HUM). The browser asks for the microphone the first time. Then:
 1. **Count-in**: four rim clicks.
 2. **Record**: four bars, with a quiet click on every beat to keep time and nothing of the
    old song playing.
-3. **Result**: the hum **replaces the whole composition**. The pattern becomes just the hummed
-   melody, in the key you hummed it in, played by a sustained LEAD voice. Its cubes light up, the
-   rest go dark, and it plays from bar one. **Esc** cancels.
+3. **Result**: the hum **replaces the whole composition**. Your melody is kept exactly as hummed,
+   in the key you hummed it in, played by a sustained LEAD voice, and **a band is written around
+   it** in the style that was playing. It plays from bar one. **Esc** cancels.
+
+**The band around a hum** (`accompany` and `harmonize` in `src/patterns.js`):
+* **Chords**: one per bar, the triad of the hum's key that best agrees with what you sang over
+  it. A note counts for how long it's held in that bar, and more on a strong beat; a strong-beat
+  note outside the chord counts against it. I, IV and V win ties, the first bar leans to the home
+  chord, and the last two lean to a cadence. For example, a C major tune gives C–F–G–C and an
+  A minor one Am–F–Dm–Am.
+* **Drums, bass, chord rhythm**: from the style's grids, as for a generated pattern, but in the
+  hum's key and over those chords. The bass follows the kick and the chord of each bar.
+* **Answering the gaps**: wherever you rest for a beat or more, percussion fills the gap and an
+  open hat leads back in, so the kit follows your phrasing.
+* After a hum the timeline's style shows as `HUM + CITY POP`. Clicking it re-arranges the band in
+  the next style, and NEW writes a new band in the same style. **Your melody never changes.**
+  Mute the other lanes to hear it alone.
 
 **Analysis** (`src/hum.js`):
 * Microphone chunks are stamped with the audio-clock time of their first sample (an

@@ -2,10 +2,12 @@ import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 
 /*
-  All ~100 cubes are one InstancedMesh: one draw call. Each instance carries its colour and a
-  `glow` value. Glow does two things in the shader: it pulls the surface colour toward white and
-  it adds that colour as emission — so a struck cube doesn't just get lit, it becomes the light,
-  and bloom picks it up. At glow 0 it is a plain, slightly rough painted block.
+  All ~100 cubes are one InstancedMesh: one draw call. Each instance carries its colour and two
+  numbers: `white`, how far its colour is pulled toward white, and `glow`, how much of that colour
+  it gives off as light — so a struck cube doesn't just get lit, it becomes the light, and bloom
+  picks it up. At 0 and 0 it is a plain, slightly rough painted block. The two are separate so the
+  display modes can drive them differently: PAINTED whitens with the glow, DARK whitens with
+  distance thrown.
 */
 
 export class Cubes {
@@ -15,21 +17,24 @@ export class Cubes {
     this.glowAttr = new THREE.InstancedBufferAttribute(this.glow, 1);
     this.glowAttr.setUsage(THREE.DynamicDrawUsage);
     geo.setAttribute('aGlow', this.glowAttr);
+    this.white = new Float32Array(pieces.length);
+    this.whiteAttr = new THREE.InstancedBufferAttribute(this.white, 1);
+    this.whiteAttr.setUsage(THREE.DynamicDrawUsage);
+    geo.setAttribute('aWhite', this.whiteAttr);
 
     const mat = new THREE.MeshStandardMaterial({ roughness: 0.62, metalness: 0.05 });
     mat.onBeforeCompile = (shader) => {
       shader.vertexShader = shader.vertexShader
-        .replace('#include <common>', '#include <common>\nattribute float aGlow;\nvarying float vGlow;')
-        .replace('#include <begin_vertex>', '#include <begin_vertex>\nvGlow = aGlow;');
+        .replace('#include <common>', '#include <common>\nattribute float aGlow;\nattribute float aWhite;\nvarying float vGlow;\nvarying float vWhite;')
+        .replace('#include <begin_vertex>', '#include <begin_vertex>\nvGlow = aGlow;\nvWhite = aWhite;');
       shader.fragmentShader = shader.fragmentShader
-        .replace('#include <common>', '#include <common>\nvarying float vGlow;')
+        .replace('#include <common>', '#include <common>\nvarying float vGlow;\nvarying float vWhite;')
         .replace(
           '#include <emissivemap_fragment>',
           [
             '#include <emissivemap_fragment>',
-            'vec3 hot = mix(diffuseColor.rgb, vec3(1.0), smoothstep(0.35, 1.0, vGlow));',
-            'totalEmissiveRadiance += hot * vGlow * 1.5;',
-            'diffuseColor.rgb = mix(diffuseColor.rgb, vec3(1.0), vGlow * 0.7);',
+            'diffuseColor.rgb = mix(diffuseColor.rgb, vec3(1.0), vWhite);',
+            'totalEmissiveRadiance += diffuseColor.rgb * vGlow * 1.5;',
           ].join('\n'),
         );
     };
@@ -48,6 +53,12 @@ export class Cubes {
     this.axis = new THREE.Vector3();
   }
 
+  // Put the painted colours back (after DARK mode drew its own).
+  restore() {
+    this.base.forEach((c, i) => this.mesh.setColorAt(i, c));
+    this.mesh.instanceColor.needsUpdate = true;
+  }
+
   setColors(colors) {
     colors.forEach((c, i) => {
       this.base[i].set(c);
@@ -56,7 +67,8 @@ export class Cubes {
     this.mesh.instanceColor.needsUpdate = true;
   }
 
-  update(pieces, physics, glow) {
+  // `display` (optional): per-cube colours for this frame, leaving the painted base untouched.
+  update(pieces, physics, glow, white, display = null) {
     const { u, th } = physics;
     for (let i = 0; i < pieces.length; i++) {
       const pc = pieces[i];
@@ -72,9 +84,13 @@ export class Cubes {
       this.m.compose(this.p, this.q, this.s);
       this.mesh.setMatrixAt(i, this.m);
       this.glow[i] = glow[i];
+      this.white[i] = white[i];
+      if (display) this.mesh.setColorAt(i, display[i]);
     }
     this.mesh.instanceMatrix.needsUpdate = true;
     this.glowAttr.needsUpdate = true;
+    this.whiteAttr.needsUpdate = true;
+    if (display) this.mesh.instanceColor.needsUpdate = true;
   }
 
   dispose() {

@@ -7,7 +7,7 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 
 import { generateCluster } from './cluster.js';
 import { assignVoices, noteFor, chordAt, chordSpread, setHarmony, VOICE } from './music.js';
-import { presetPattern, generatePattern, SCALES, STYLE, STYLES } from './patterns.js';
+import { presetPattern, generatePattern, accompany, SCALES, STYLE, STYLES } from './patterns.js';
 import { mapPattern } from './mapper.js';
 import { Timeline } from './timeline.js';
 import { openMic, analyzeHum, humToMelody } from './hum.js';
@@ -37,6 +37,7 @@ const HEAT_TAU = 0.3; // seconds; a struck cube is back to its colour in about 4
 const RETOUCH = 0.25; // a cube can't be touched again sooner than this, even at the edge between two
 const GHOST = 0.14; // how hard the indicator brushes a cube that has no note this orbit
 const IDLE_COLOR = '#2b2a27'; // cubes without a note go dark, so the block shows the pattern
+const DARK_GREY = new THREE.Color('#1a1a1a'); // DARK look: every cube at rest
 const BPM_STEPS = [70, 85, 100, 115, 130, 145]; // the BPM switch cycles through these
 
 // Panel levels → physical values. Level 0/1 is the first entry.
@@ -57,6 +58,7 @@ const state = {
   ret: intParam('return', 1, 5, 3),
   caves: intParam('caves', 1, 3, 2),
   timeline: params.get('timeline') !== '0',
+  look: params.get('look') === 'dark' ? 'dark' : 'painted',
   playing: false,
   unlocked: false,
 };
@@ -82,6 +84,7 @@ function syncUrl() {
   }
   if (state.bpm !== pattern.naturalBpm) q.set('bpm', String(state.bpm));
   if (!state.timeline) q.set('timeline', '0');
+  if (state.look !== 'painted') q.set('look', state.look);
   if (state.grain !== 3) q.set('grain', String(state.grain));
   if (state.zone !== 1) q.set('zone', String(state.zone));
   if (state.force !== 3) q.set('force', String(state.force));
@@ -253,9 +256,12 @@ function build(seed) {
     idleByStep: idleBuckets(pieces, mapping),
     heat: new Float32Array(pieces.length),
     glow: new Float32Array(pieces.length),
+    white: new Float32Array(pieces.length),
+    display: pieces.map(() => new THREE.Color()),
     lastTouch: new Float64Array(pieces.length).fill(-1),
   };
-  cubes.update(pieces, physics, world.glow);
+  world.vivid = vividColors(world);
+  cubes.update(pieces, physics, world.glow, world.white);
   cubes.mesh.computeBoundingSphere();
   cubes.mesh.boundingSphere.radius += TUNING.maxOffset; // cubes fly; keep raycasts from being culled early
 }
@@ -264,6 +270,26 @@ function build(seed) {
 function colorOf(mapping, i) {
   const ev = mapping.cubeEvents[i][0];
   return ev ? pairFor(VOICE.get(pattern.voices[ev.lane]).index).bg : IDLE_COLOR;
+}
+
+/*
+  The DARK look's colours: each cube's part colour, pushed brighter and more saturated so it reads
+  as light against the dark block. A cube with no note uses its fallback voice's colour, so even
+  a brushed one shows a hue.
+*/
+function vividColors(w) {
+  const hsl = {};
+  return w.pieces.map((p, i) => {
+    const ev = w.mapping.cubeEvents[i][0];
+    const c = new THREE.Color(ev ? pairFor(VOICE.get(pattern.voices[ev.lane]).index).bg : pairFor(p.voice.index).bg);
+    c.getHSL(hsl);
+    return c.setHSL(hsl.h, Math.min(1, hsl.s * 1.6 + 0.2), Math.max(0.5, Math.min(0.62, hsl.l * 1.1 + 0.08)));
+  });
+}
+
+// The colour a cube's thrown marks take: what it looks like when it's struck.
+function markColor(i) {
+  return state.look === 'dark' ? world.vivid[i] : world.cubes.base[i];
 }
 
 function idleBuckets(pieces, mapping) {
@@ -277,6 +303,7 @@ function remap() {
   world.mapping = mapPattern(pattern, world.pieces, STEPS);
   world.idleByStep = idleBuckets(world.pieces, world.mapping);
   world.cubes.setColors(world.pieces.map((_, i) => colorOf(world.mapping, i)));
+  world.vivid = vividColors(world);
 }
 
 function setPattern(p) {
@@ -354,7 +381,7 @@ function strike(i, dir, arm, energy, t, quiet = false) {
   const p = pieces[i];
   const o = i * 3;
   tmpV.set(p.rest.x + physics.u[o], p.rest.y + physics.u[o + 1], p.rest.z + physics.u[o + 2]);
-  if (!quiet) emissions.throw(tmpV, p.scale, world.cubes.base[i], energy, state.grain, t);
+  if (!quiet) emissions.throw(tmpV, p.scale, markColor(i), energy, state.grain, t);
 }
 
 // Called by the transport for every step, ahead of time. Sound is booked now; the picture waits.
@@ -640,13 +667,29 @@ const act = {
     syncUrl();
     refreshUi();
   },
+  setLook(look) {
+    state.look = look;
+    if (look === 'painted') world?.cubes.restore();
+    syncUrl();
+    refreshUi();
+  },
   // BPM is a switch: each press moves to the next of six tempos, and wraps around.
   cycleBpm() {
     act.setBpm(BPM_STEPS.find((b) => b > state.bpm) ?? BPM_STEPS[0]);
   },
   nextStyle() {
     const ids = STYLES.map((s) => s.id);
-    act.randomPattern(ids[(ids.indexOf(pattern.style) + 1) % ids.length]);
+    const cur = pattern.style === 'hum' ? pattern.accomp : pattern.style;
+    const next = ids[(ids.indexOf(cur) + 1) % ids.length];
+    if (pattern.style === 'hum') act.rearrange(next);
+    else act.randomPattern(next);
+  },
+  // A hummed melody keeps its notes; only the band around it is written again, in `styleId`.
+  rearrange(styleId) {
+    const melody = pattern.events.filter((e) => e.lane === 'melody');
+    const p = accompany(melody, { root: pattern.root, scale: pattern.scale, bpm: pattern.bpm }, styleId, randomSeed());
+    p.naturalBpm = pattern.naturalBpm;
+    setPattern(p);
   },
   setBpm(bpm) {
     state.bpm = Math.max(50, Math.min(180, bpm));
@@ -657,6 +700,7 @@ const act = {
     refreshUi();
   },
   randomPattern(styleId = pattern.style) {
+    if (pattern.style === 'hum') return act.rearrange(STYLE.has(styleId) ? styleId : pattern.accomp);
     const p = generatePattern(STYLE.has(styleId) ? styleId : STYLES[0].id, randomSeed());
     p.naturalBpm = p.bpm;
     setPattern(p);
@@ -712,6 +756,7 @@ window.addEventListener('keydown', (e) => {
   else if (e.key === 'l' || e.key === 'L') act.toggleTimeline();
   else if (e.key === 'h' || e.key === 'H') act.hum();
   else if (e.key === 'b' || e.key === 'B') act.cycleBpm();
+  else if (e.key === 'v' || e.key === 'V') act.setLook(state.look === 'dark' ? 'painted' : 'dark');
   else if (e.key === 'Escape' && hum.active) stopHum('CANCELLED');
 });
 
@@ -804,23 +849,12 @@ function finishHum() {
     timeline.setStatus('HEARD NOTHING · HUM LOUDER, CLOSER TO THE MIC');
     return;
   }
-  const scale = tune.scale;
-  setPattern({
-    name: 'HUMMED',
-    style: 'hum',
-    seed: 0,
-    bpm: pattern.bpm,
-    naturalBpm: pattern.bpm,
-    swing: 0,
-    root: tune.root,
-    scale,
-    melodyScale: scale,
-    seventh: false,
-    progression: [0, 0, 0, 0],
-    voices: { ...pattern.voices, melody: 'lead' },
-    events: tune.events,
-  });
-  timeline.setStatus(`HEARD ${tune.events.length} NOTES`);
+  // Keep the tune exactly as hummed and write the band around it, in the style that was playing.
+  const style = pattern.style === 'hum' ? pattern.accomp : pattern.style;
+  const p = accompany(tune.events, { root: tune.root, scale: tune.scale, bpm: pattern.bpm }, style, randomSeed());
+  p.naturalBpm = pattern.naturalBpm;
+  setPattern(p);
+  timeline.setStatus(`HEARD ${tune.events.length} NOTES · BAND ADDED`);
   transport.pos = 0;
   transport.startAt(audioCtx().currentTime + 0.15);
   state.playing = true;
@@ -850,6 +884,10 @@ const qStep = new THREE.Quaternion();
 const orbitAxis = new THREE.Vector3();
 
 let lastT = now();
+const smoothstep = (a, b, x) => {
+  const k = Math.max(0, Math.min(1, (x - a) / (b - a)));
+  return k * k * (3 - 2 * k);
+};
 
 function frame(stamp) {
   timer.update(stamp);
@@ -897,14 +935,29 @@ function frame(stamp) {
   if (world) {
     applyPending(t);
     world.physics.advance(dt);
-    const { heat, glow, physics } = world;
+    const { heat, glow, white, physics, display, vivid } = world;
     const decay = Math.exp(-dt / HEAT_TAU);
+    const dark = state.look === 'dark';
+    // How far a hard hit usually throws a cube at this FORCE; DARK is fully white out there.
+    const reach = 0.6 + 0.35 * FORCE_MULT[state.force - 1];
     for (let i = 0; i < heat.length; i++) {
       heat[i] *= decay;
-      // Cubes the wave is passing through warm up with their displacement — the light travels too.
-      glow[i] = Math.min(1, heat[i] + Math.min(0.3, Math.max(0, physics.offset(i) - 0.05) * 0.2));
+      const off = physics.offset(i);
+      if (dark) {
+        // DARK: grey and colourless at rest; struck, it lights up in its colour, and the further
+        // it is thrown from its place in the block the closer it gets to white.
+        // Small wobbles from a neighbour's hit don't count; only a real strike or throw lights it.
+        const active = Math.min(1, heat[i] * 1.1 + Math.max(0, off - 0.2) * 0.6);
+        display[i].copy(DARK_GREY).lerp(vivid[i], active);
+        white[i] = smoothstep(0.5, reach, off);
+        glow[i] = active * 0.4 + white[i] * 0.4;
+      } else {
+        // PAINTED: cubes the wave is passing through warm up with their displacement.
+        glow[i] = Math.min(1, heat[i] + Math.min(0.3, Math.max(0, off - 0.05) * 0.2));
+        white[i] = glow[i] * 0.7;
+      }
     }
-    world.cubes.update(world.pieces, physics, glow);
+    world.cubes.update(world.pieces, physics, glow, white, dark ? display : null);
   }
   emissions.update(t);
   placeIndicator(transport.angle(t));

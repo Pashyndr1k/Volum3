@@ -421,3 +421,89 @@ export function presetPattern() {
     p.events.push({ lane: 'melody', step, vel: 0.72 + accent(step % BAR), midi: scaleMidi(5, 'major', 60, deg), len });
   return p;
 }
+
+// ---- Accompanying a hummed melody -------------------------------------------------------
+
+/*
+  Chords for a melody that already exists: one per bar, the diatonic triad that best agrees with
+  what is sung over it. A note counts for the time it is held in that bar, and more when it
+  lands on a strong beat; a strong-beat note outside the chord counts against it. Small nudges
+  make the line sound like a song: start at home, and prefer a V (or IV) before the end.
+*/
+export function harmonize(melody, root, scale) {
+  const p = { root, scale, seventh: false };
+  const progression = [];
+  for (let b = 0; b < 4; b++) {
+    const lo = b * BAR, hi = lo + BAR;
+    let best = 0;
+    let bestScore = -Infinity;
+    for (let deg = 0; deg < 7; deg++) {
+      // Skip the diminished triad; it rarely sounds like home in a simple song.
+      const { tones } = chordOf(p, deg, 48, false);
+      if (tones[1] === 3 && tones[2] === 6) continue;
+      const pcs = chordPcs(p, deg);
+      let score = 0;
+      for (const e of melody) {
+        const overlap = Math.min(hi, e.step + e.len) - Math.max(lo, e.step);
+        if (overlap <= 0) continue;
+        const strong = e.step >= lo && e.step % 8 === 0 ? 1.6 : e.step >= lo && e.step % 4 === 0 ? 1.25 : 1;
+        const inChord = pcs.includes(((e.midi % 12) + 12) % 12);
+        score += inChord ? overlap * strong : strong > 1 ? -0.5 * overlap : -0.1 * overlap;
+      }
+      if (deg === 0 || deg === 3 || deg === 4) score += 0.25; // I, IV and V win ties
+      if (b === 0 && deg === 0) score += 1.5;
+      if (b === 2 && (deg === 4 || deg === 3)) score += 0.6;
+      if (b === 3 && (deg === 4 || deg === 0)) score += 1;
+      if (b > 0 && deg === progression[b - 1]) score -= 0.4; // keep it moving if it can
+      if (score > bestScore) {
+        bestScore = score;
+        best = deg;
+      }
+    }
+    progression.push(best);
+  }
+  return progression;
+}
+
+/*
+  The band around a hummed melody. The melody is kept exactly as sung; everything else is
+  written in the chosen style, over chords picked to fit the tune, in the tune's key. Where the
+  singer rests for a beat or more, the percussion answers in the gap — the kit follows the
+  phrasing rather than playing over it.
+*/
+export function accompany(melody, { root, scale, bpm }, styleId, seed) {
+  const style = STYLE.get(styleId) ?? STYLES[0];
+  const rand = mulberry32(seed ^ 0x6c8e9cf5);
+  const head = {
+    name: `HUMMED · ${style.label}`,
+    seed: 0,
+    bpm,
+    root,
+    progression: harmonize(melody, root, scale),
+  };
+  const p = assemble(style, rand, head);
+  p.style = 'hum';
+  p.accomp = style.id;
+  p.scale = scale;
+  p.melodyScale = scale;
+  p.swing = 0;
+  p.voices.melody = 'lead';
+  // The chords and bass were built with the style's scale in `assemble`; rebuild them in the tune's.
+  const drums = p.events.filter((e) => e.lane !== 'bass' && e.lane !== 'chord');
+  const kicks = drums.filter((e) => e.lane === 'kick').map((e) => e.step);
+  p.events = [...drums, ...bassEvents(p, style, kicks, rand), ...chordEvents(p, style)];
+
+  // Answer the gaps: a rest of a beat or more gets a couple of percussion hits and an open hat.
+  const sorted = [...melody].sort((a, b) => a.step - b.step);
+  sorted.forEach((e, k) => {
+    const end = e.step + e.len;
+    const next = k + 1 < sorted.length ? sorted[k + 1].step : STEPS + (sorted[0]?.step ?? 0);
+    const gap = next - end;
+    if (gap < 4) return;
+    for (let s = end + 1; s < Math.min(next, end + 8); s += 2)
+      if (rand() < 0.45) p.events.push({ lane: 'perc', step: s % STEPS, vel: 0.55 + rand() * 0.2 });
+    if (rand() < 0.6) p.events.push({ lane: 'open', step: (next - 2 + STEPS) % STEPS, vel: 0.5 });
+  });
+  p.events.push(...melody.map((e) => ({ ...e })));
+  return p;
+}

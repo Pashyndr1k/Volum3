@@ -7,7 +7,8 @@ carry the knock through the block as a wave, and caverns let you see into its ho
 
 The music comes from the **timeline** along the bottom: a 4-bar beat pattern (drums, bass,
 chords and a melody) that you can take from the preset, roll at random in seven styles and
-tempos, edit by clicking, or **hum** into the microphone. Its notes are dealt to the cubes, each
+tempos, edit by clicking, or **hum** into the microphone — a hummed tune gets a band written
+around it. Its notes are dealt to the cubes, each
 to a cube the indicator passes at that moment.
 
 Built on a close reading of halfof8's [SQNCR](https://seq.halfof8.com/).
