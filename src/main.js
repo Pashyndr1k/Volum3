@@ -12,7 +12,9 @@ import { mapPattern } from './mapper.js';
 import { Timeline } from './timeline.js';
 import { openMic, analyzeHum, humToMelody } from './hum.js';
 import { INK } from './palette.js';
-import { PROFILES, PROFILE, PATTERNS, LANE_PATTERN, VOICE_LANE, inkFor } from './profiles.js';
+import { PROFILES, PROFILE, VOICE_LANE, inkFor } from './profiles.js';
+import { TEXTURE_SETS, TEXTURE_SET, PATTERNS, LANE_LETTER, GLYPHS, glyphIndex, buildGlyphAtlas } from './textures.js';
+import { STYLES as SHADER_STYLES, StylePasses } from './styles.js';
 import { createFxPass } from './fxpass.js';
 import { ClusterPhysics, TUNING } from './physics.js';
 import { Cubes } from './cubes.js';
@@ -31,7 +33,7 @@ const intParam = (k, lo, hi, dflt) => {
 };
 
 const STEPS = 64; // one orbit = four bars of sixteenths
-const ORBIT_RADIUS = 7.6;
+const ORBIT_RADIUS = 8.8;
 const ORBIT_TILT = new THREE.Quaternion().setFromEuler(new THREE.Euler(0.22, 0, 0.1));
 const ORBIT_TILT_INV = ORBIT_TILT.clone().invert();
 const READ_LATENCY = 0.04; // a still pointer's notes are scheduled this far ahead, for steady timing
@@ -60,7 +62,9 @@ const state = {
   timeline: params.get('timeline') !== '0',
   look: params.get('look') === 'dark' ? 'dark' : 'painted',
   profile: PROFILE.has(params.get('profile')) ? params.get('profile') : 'halfof8',
-  texture: params.get('texture') !== '0',
+  textureSet: TEXTURE_SET.has(params.get('texture')) ? params.get('texture') : params.get('texture') === '0' ? 'none' : 'graphic',
+  shader: SHADER_STYLES.some((st) => st.id === params.get('shader')) ? params.get('shader') : 'clean',
+  keys: false,
   playing: false,
   unlocked: false,
 };
@@ -88,7 +92,8 @@ function syncUrl() {
   if (!state.timeline) q.set('timeline', '0');
   if (state.look !== 'painted') q.set('look', state.look);
   if (state.profile !== 'halfof8') q.set('profile', state.profile);
-  if (!state.texture) q.set('texture', '0');
+  if (state.textureSet !== 'graphic') q.set('texture', state.textureSet);
+  if (state.shader !== 'clean') q.set('shader', state.shader);
   if (state.grain !== 3) q.set('grain', String(state.grain));
   if (state.zone !== 1) q.set('zone', String(state.zone));
   if (state.force !== 3) q.set('force', String(state.force));
@@ -111,7 +116,7 @@ const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x000000);
 
 const camera = new THREE.PerspectiveCamera(35, window.innerWidth / window.innerHeight, 0.1, 200);
-camera.position.set(18, 11.5, 22);
+camera.position.set(19.5, 12.5, 24);
 
 const controls = new OrbitControls(camera, canvas);
 controls.enableDamping = true;
@@ -135,6 +140,10 @@ composer.addPass(new OutputPass());
 // Fringe and grain work on the finished, display-ready image, so their amounts read as they look.
 const fxPass = createFxPass();
 composer.addPass(fxPass);
+// The shader style comes last: it is how the finished frame is shown.
+const stylePasses = new StylePasses(composer);
+stylePasses.set(state.shader);
+stylePasses.resize(window.innerWidth, window.innerHeight, renderer.getPixelRatio());
 
 // `stage` floats; `cluster` is the big cube and is what spins in touch mode. The orbit belongs to
 // the stage, so in orbit mode the cluster is held still relative to it and every cube keeps its step.
@@ -185,8 +194,28 @@ const indicator = new THREE.Mesh(
 );
 stage.add(indicator);
 const indicatorLight = new THREE.PointLight(0xfff1dc, 40, 13, 2);
+
+// A soft halo round the indicator: a sprite, not bloom, so the glow stays its own size and colour.
+const halo = (() => {
+  const c = document.createElement('canvas');
+  c.width = c.height = 128;
+  const g = c.getContext('2d');
+  const grad = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+  grad.addColorStop(0, 'rgba(255,255,255,0.9)');
+  grad.addColorStop(0.18, 'rgba(255,255,255,0.45)');
+  grad.addColorStop(0.5, 'rgba(255,255,255,0.12)');
+  grad.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = grad;
+  g.fillRect(0, 0, 128, 128);
+  const sprite = new THREE.Sprite(
+    new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(c), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false }),
+  );
+  sprite.scale.setScalar(2.4);
+  return sprite;
+})();
 const profile = () => PROFILE.get(state.profile);
 indicator.add(indicatorLight);
+indicator.add(halo);
 
 function placeIndicator(theta) {
   orbitPoint(theta, indicator.position);
@@ -321,10 +350,43 @@ function dressCubes() {
   world.ink = pieces.map((_, i) => new THREE.Color(inkFor(pr, laneOf(mapping, i) ?? 'kick')));
   world.restInk = new THREE.Color(pr.rest).lerp(new THREE.Color('#ffffff'), 0.08);
   world.rest = new THREE.Color(pr.rest);
-  cubes.setPatterns(pieces.map((_, i) => PATTERNS[LANE_PATTERN[laneOf(mapping, i) ?? 'idle']]), world.ink);
-  cubes.setLook({ ...pr.material, peak: pr.peak, texture: state.texture, emit: pr.fx.glow });
+  cubes.setPatterns(pieces.map((_, i) => textureSpec(i)), world.ink);
+  if (atlas) cubes.setAtlas(atlas.texture);
+  cubes.setLook({ ...pr.material, peak: pr.peak, texture: state.textureSet !== 'none', emit: pr.fx.glow });
   if (state.look === 'dark') cubes.restore();
 }
+
+/*
+  What the current texture set prints on cube i: the pattern and scale for its part, and for the
+  type sets its two glyphs — the part's letter for the sides, and a number for the top: the beat
+  a drum lands on (1–4), or the scale degree a tuned part plays (1–7).
+*/
+function textureSpec(i) {
+  const lane = laneOf(world.mapping, i);
+  const spec = TEXTURE_SET.get(state.textureSet).lanes[lane ?? 'idle'];
+  const ev = world.mapping.cubeEvents[i][0];
+  let number = world.pieces[i].step % 10;
+  if (ev && ev.midi !== undefined) {
+    const deg = SCALES[pattern.scale].indexOf((((ev.midi - pattern.root) % 12) + 12) % 12);
+    if (deg >= 0) number = deg + 1;
+  } else if (ev) number = Math.floor((ev.step % 16) / 4) + 1;
+  const letter = LANE_LETTER[lane] ?? GLYPHS[(i * 7) % 26];
+  return {
+    pattern: PATTERNS[spec.pattern],
+    density: spec.fit ? -spec.density : spec.density,
+    fill: spec.fill ?? 0,
+    glyph: [glyphIndex(letter), glyphIndex(String(number))],
+  };
+}
+
+// The glyph atlas is drawn once the type face has loaded, so the letters are in it.
+let atlas = null;
+(document.fonts?.load('500 100px "DM Mono"') ?? Promise.resolve())
+  .catch(() => {})
+  .then(() => {
+    atlas = buildGlyphAtlas();
+    world?.cubes.setAtlas(atlas.texture);
+  });
 
 // The rest of the frame for the current profile: background, light, bloom, fringe, grain.
 function applyProfile() {
@@ -341,6 +403,7 @@ function applyProfile() {
   ring.material.color.copy(accent);
   trail.material.color.copy(accent);
   cursor.material.color.copy(accent);
+  halo.material.color.copy(accent);
   if (world) dressCubes();
 }
 
@@ -393,6 +456,8 @@ function pushDir(i, toward) {
 // ---- Striking -------------------------------------------------------------------------------
 
 const pending = []; // strikes booked on the audio clock, applied when their time comes
+const pulses = []; // kick and snare times: the shader styles and the indicator's halo pulse on them
+let pulse = 0;
 const tmpV = new THREE.Vector3();
 const tmpQ = new THREE.Quaternion();
 const camRight = new THREE.Vector3();
@@ -455,6 +520,7 @@ function playStep(s, time) {
   const heard = new Set();
   for (const { event, cube } of world.mapping.byStep[s]) {
     const silent = timeline.muted.has(event.lane);
+    if (!silent && (event.lane === 'kick' || event.lane === 'snare')) pulses.push(time);
     pending.push({ time, i: cube, energy: silent ? GHOST : Math.min(1, (event.vel ?? 0.8) * 1.1), gen: world });
     if (silent) continue;
     const voice = VOICE.get(pattern.voices[event.lane]);
@@ -725,10 +791,22 @@ const act = {
     syncUrl();
     refreshUi();
   },
-  toggleTexture() {
-    state.texture = !state.texture;
-    world?.cubes.setLook({ ...profile().material, peak: profile().peak, texture: state.texture, emit: profile().fx.glow });
+  cycleTexture() {
+    const ids = TEXTURE_SETS.map((t) => t.id);
+    state.textureSet = ids[(ids.indexOf(state.textureSet) + 1) % ids.length];
+    if (world) dressCubes();
     syncUrl();
+    refreshUi();
+  },
+  cycleShader() {
+    const ids = SHADER_STYLES.map((st) => st.id);
+    state.shader = ids[(ids.indexOf(state.shader) + 1) % ids.length];
+    stylePasses.set(state.shader);
+    syncUrl();
+    refreshUi();
+  },
+  toggleKeys() {
+    state.keys = !state.keys;
     refreshUi();
   },
   setLook(look) {
@@ -806,7 +884,16 @@ const act = {
 };
 
 function refreshUi() {
-  renderPanel(panel, { ...state, profileLabel: profile().label }, act);
+  renderPanel(
+    panel,
+    {
+      ...state,
+      profileLabel: profile().label,
+      textureLabel: TEXTURE_SET.get(state.textureSet).label,
+      shaderLabel: SHADER_STYLES.find((st) => st.id === state.shader).label,
+    },
+    act,
+  );
   renderHint(hint, state, world ? world.pieces.length : 0);
 }
 
@@ -822,7 +909,9 @@ window.addEventListener('keydown', (e) => {
   else if (e.key === 'b' || e.key === 'B') act.cycleBpm();
   else if (e.key === 'v' || e.key === 'V') act.setLook(state.look === 'dark' ? 'painted' : 'dark');
   else if (e.key === 'p' || e.key === 'P') act.cycleProfile();
-  else if (e.key === 'x' || e.key === 'X') act.toggleTexture();
+  else if (e.key === 'x' || e.key === 'X') act.cycleTexture();
+  else if (e.key === 's' || e.key === 'S') act.cycleShader();
+  else if (e.key === '?' || e.key === '/') act.toggleKeys();
   else if (e.key === 'Escape' && hum.active) stopHum('CANCELLED');
 });
 
@@ -838,6 +927,7 @@ function frameView() {
 window.addEventListener('resize', () => {
   renderer.setSize(window.innerWidth, window.innerHeight);
   composer.setSize(window.innerWidth, window.innerHeight);
+  stylePasses.resize(window.innerWidth, window.innerHeight, renderer.getPixelRatio());
   frameView();
 });
 
@@ -1037,6 +1127,16 @@ function frame(stamp) {
 
   if (state.mode === 'orbit') controls.update();
   fxPass.uniforms.uTime.value = (t % 100) * 13.7;
+  // The beat pulse: up to 1 on each kick and snare as it sounds, then falling away.
+  for (let k = pulses.length - 1; k >= 0; k--)
+    if (pulses[k] <= t) {
+      pulse = 1;
+      pulses.splice(k, 1);
+    }
+  pulse *= Math.exp(-dt * 7);
+  stylePasses.update(t % 1000, pulse);
+  halo.scale.setScalar(2.4 * (1 + 0.28 * pulse));
+  world?.cubes.setTime(t % 1000);
   composer.render();
   lastT = t;
   requestAnimationFrame(frame);

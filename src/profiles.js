@@ -27,36 +27,6 @@ export const VOICE_LANE = {
   chord: 'chord', zap: 'melody', bell: 'melody', lead: 'melody',
 };
 
-/*
-  Textures: the pattern printed on each kind of cube, from the pattern boards — a small grammar
-  of 1-bit marks on a grid. Drawn in the shader, so they stay sharp at any size and can swell
-  when a cube is struck (dots fill in like a halftone going darker, lines thicken).
-*/
-export const PATTERNS = {
-  none: 0,
-  dots: 1, // halftone dot grid — p07, p08, p03
-  rings: 2, // circle outlines — p07, p17
-  cross: 3, // X marks — p15, p12
-  plus: 4, // plus signs — p11, p13
-  checker: 5, // checkerboard — p16, p00
-  stripes: 6, // diagonal hatching — p05, p10
-  bars: 7, // horizontal bars — p05, p14, p09
-  target: 8, // concentric rings from the face centre — p17, c12, c29
-  grid: 9, // hairline grid — p08
-};
-
-export const LANE_PATTERN = {
-  kick: 'target',
-  snare: 'cross',
-  hat: 'dots',
-  open: 'rings',
-  perc: 'checker',
-  bass: 'bars',
-  chord: 'plus',
-  melody: 'stripes',
-  idle: 'grid',
-};
-
 export const PROFILES = [
   {
     id: 'halfof8',

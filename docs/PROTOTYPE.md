@@ -20,7 +20,9 @@ Or by hand: `npm install`, then `npm run dev`, and open http://localhost:5173.
 
 Click anywhere once to enable sound, since browsers block audio until the page gets a gesture.
 
-**Top row**
+**The top menu** is four groups: PLAY (play, tempo, orbit/touch), LOOK (painted/dark, colour, texture, shader), MOTION and BLOCK. Choices are one word that cycles on click; levels are small meters (click a cell).
+
+**PLAY and LOOK**
 
 | Input | Action |
 |---|---|
@@ -34,7 +36,7 @@ Click anywhere once to enable sound, since browsers block audio until the page g
 | Click a cube | Always plays it, even the one already touched |
 | Drag | ORBIT mode: move the camera. TOUCH mode: spin the block, which keeps its momentum. |
 
-**Second row: the physics**
+**MOTION and BLOCK: the physics**
 
 | Control | Levels | What it does |
 |---|---|---|
@@ -47,6 +49,8 @@ Click anywhere once to enable sound, since browsers block audio until the page g
 Every setting is saved in the URL, so a link reproduces the whole setup.
 
 ## The timeline
+
+The indicator orbits at radius 8.8 with a soft halo in the profile's accent colour, which swells on each kick and snare.
 
 The small frame at the bottom centre is the pattern the indicator plays: one orbit laid flat,
 64 sixteenths (4 bars). It always shows all eight lanes (MELODY, CHORD, BASS, PERC, OPEN, HAT,
@@ -69,7 +73,9 @@ is in the colour its cubes take. The playhead is the indicator's angle.
 | **V** / LOOK PAINTED | Every cube wears its part's colour; cubes with no note are dark |
 | **V** / LOOK DARK | Every cube is dark grey and colourless at rest. Struck, it lights up in a vivid version of its colour; the further it is thrown from its place in the block, the closer it gets to white (fully white at a hard hit's usual reach for the current FORCE). Small wobbles from a neighbour's hit leave it grey. |
 | **P** / PROFILE | Cycle the colour profiles built from the reference boards: HALFOF8, DOPAMINE, FJORD, CANDY, AFTERGLOW, RISO, BONE, PRISM. See [VISUAL_PROFILES.md](VISUAL_PROFILES.md). |
-| **X** / TEXTURE | Patterns on the cubes, one per part (targets, X marks, halftone dots, rings, checkers, bars, plus signs, hatching), which swell when struck |
+| **X** / TEXTURE | Texture set: NONE, GRAPHIC, MICRO, MACRO, TYPE (big letters and numbers), DOT MATRIX, BITMAP, SIGNAL, MIXED |
+| **S** / SHADER | Shader style for the whole frame: CLEAN, PRISM (light split into a rainbow), GLITCH (digital video interference), HALFTONE, DITHER |
+| **?** | Show the keyboard shortcuts |
 
 The URL keeps `style` and `pattern`, so a link brings back the same groove.
 

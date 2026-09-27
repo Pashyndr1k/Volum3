@@ -1,4 +1,4 @@
-# Colour profiles and cube textures
+# Colour profiles, texture sets and shader styles
 
 This document is based on the 51 references in `references.zip`:
 * `colors/`: 30 palette cards, gradient studies and renders.
@@ -80,33 +80,59 @@ amounts read as they look:
 * `grain`: film or paper grain.
 * a soft vignette.
 
-## Cube textures
+## Texture sets (`src/textures.js`)
 
-The pattern boards' vocabulary, one mark per part. The patterns are drawn in the cube shader
-(`src/cubes.js`) on each face's own coordinates, at a fixed four cells per unit. A medium cube
-therefore carries twice as many marks as a small one rather than a stretched copy. The patterns
-stay sharp at any distance.
+Texture sets work like colour profiles: each set says what is printed on each kind of cube, as
+a pattern plus a scale. Switch with **X** or TEXTURE in the top menu; the URL keeps
+`texture=`. Scale works in one of two ways:
+* **Per unit**: a medium cube carries twice as many marks as a small one.
+* **Per face** (`fit`): one mark or glyph per face, whatever the cube's size.
 
-| Part | Pattern | From | When struck |
+![texture sets](img/texture-sets.jpg)
+
+| Set | Scale | What each part gets | From |
 |---|---|---|---|
-| KICK | concentric target from the face centre | p17, c12, c29 | rings thicken |
-| SNARE | X marks | p15, p12 | strokes thicken |
-| HAT | halftone dots | p07, p08, p03 | dots swell toward touching, like a halftone darkening |
-| OPEN | ring outlines | p07, p17 | rings thicken |
-| PERC | checkerboard | p16, p00 | the empty cells half-fill |
-| BASS | horizontal bars | p05, p14, p09 | bars widen |
-| CHORD | plus signs | p11, p13 | strokes thicken |
-| MELODY | diagonal hatching | p05, p10 | hatching widens |
-| no note | hairline grid | p08 | — |
+| NONE | — | plain cubes | — |
+| GRAPHIC | 4 per unit | kick: target · snare: X marks · hat: halftone dots · open: rings · perc: checkerboard · bass: bars · chord: plus signs · melody: hatching · no note: hairline grid | the pattern boards |
+| MICRO | 9 per unit | the same marks, as a fine screen | p00, p08 |
+| MACRO | 1 per face | the same marks, one big one per face (targets get 2–3 rings) | p07, p16, p17 |
+| TYPE | 1 per face | **large letters and numbers**: the part's letter on the sides (K S H O P B C M); on top, the beat a drum lands on (1–4) or the scale degree a tuned part plays (1–7) | c09, p02 |
+| DOT MATRIX | 1 per face | the same glyphs as a dot-matrix sign | p09, the flower video |
+| BITMAP | 5–10 per unit | 1-bit pixel noise, denser for the heavy parts (kick 70 %, hat 25 %); it reshuffles while the cube is lit | p04, the flower video |
+| SIGNAL | 3–10 per unit | broken horizontal bands that slide sideways when struck, like a bad video line | p10, p14 |
+| MIXED | 2, 4 or 8 per unit | every face picks its own mark and scale | p12, p06 |
 
-So you can read a cube's part from its surface, and a hit is visible in the pattern itself as
-well as in the colour. **X** or TEXTURE turns the patterns off (URL `texture=0`).
+All marks are drawn in the cube shader (`src/cubes.js`), so they stay sharp at any distance, and
+they swell when a cube is struck: dots grow, lines and glyphs get bolder, checkers fill in,
+pixels reshuffle, bands slide. Glyphs come from an atlas drawn once on a canvas in DM Mono. The
+dot-matrix version is made from the same letters by measuring how much of each cell of a 7 × 9
+grid a letter covers.
+
+## Shader styles (`src/styles.js`)
+
+A style is how the finished frame is shown: one full-screen shader at the very end. It receives
+the time and a beat pulse, which jumps on every kick and snare and fades, so the look moves with
+the music. Switch with **S** or SHADER; the URL keeps `shader=`.
+
+![shader styles](img/shader-styles.jpg)
+
+| Style | What it does | From |
+|---|---|---|
+| CLEAN | the frame as rendered | — |
+| PRISM | **Splits light into its spectrum.** Every pixel is sampled 16 times along a line from the centre, each sample weighted by a band of the rainbow, so white edges fan out red-to-violet. It widens toward the edges and on the beat. Bright points also throw a spectrum streak beside them, like a beam through a prism. | c13, p19 |
+| GLITCH | **A damaged digital video signal.** Slices tear sideways, blocks drop to low resolution, R and B split along the line, chroma smears, and the frame rolls now and then. Scanlines, noise lines and crushed colour are always there at a low level, and burst at random and on every kick and snare. | p14, p19, c27 |
+| HALFTONE | an LED dot screen: rotated grids of red, green and blue dots sized by the colour beneath | c06, c12, c29 |
+| DITHER | ordered 4 × 4 dither per channel on a coarse pixel grid; eight colours, near-black kept black | p04, the flower video |
+
+The styles combine freely with the colour profiles, the texture sets and both looks. Each
+profile's own fringe and grain still run before the style.
 
 ## Adding a profile
 
 Add an entry to `PROFILES` in `src/profiles.js`: 8 part colours, an ink (one colour, or one per
 part), `rest`, `idle`, `peak`, `accent`, `marks` (`'lane'` or a list of colours), `material`
 (`roughness`, `metalness`, `iridescence` 0/1) and `fx` (`bloom` [strength, radius, threshold],
-`glow`, `fringe`, `grain`). It will appear in the PROFILE switch. To change which pattern a part
-gets, edit `LANE_PATTERN`. To add a new pattern, add a branch to `patternMask` in `src/cubes.js`
-and give it an id in `PATTERNS`.
+`glow`, `fringe`, `grain`). It will appear in the PROFILE switch. To add a texture set, add an entry to `TEXTURE_SETS` in `src/textures.js`: a `{ pattern, density,
+fit?, fill? }` for each part and for `idle`. To add a new pattern, add a branch to `patternMask`
+in `src/cubes.js` and give it an id in `PATTERNS`. To add a shader style, add a fragment shader
+to `SHADERS` in `src/styles.js` and an entry to `STYLES`.
