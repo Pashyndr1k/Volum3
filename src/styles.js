@@ -70,6 +70,20 @@ vec3 spectrum(float t) { // red → violet across 0…1
   return clamp(vec3(abs(t * 6.0 - 3.0) - 1.0, 2.0 - abs(t * 6.0 - 2.0), 2.0 - abs(t * 6.0 - 4.0)), 0.0, 1.0);
 }
 float styleHash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
+// The 4 x 4 Bayer threshold, built from the 2 x 2 one: [0 2; 3 1].
+float bayer2(vec2 q) { return mod(2.0 * q.x + 3.0 * q.y, 4.0); }
+float bayer4(vec2 p) {
+  vec2 q = mod(floor(p), 4.0);
+  return (4.0 * bayer2(mod(q, 2.0)) + bayer2(floor(q / 2.0)) + 0.5) / 16.0;
+}
+// DITHER on a finished colour: ordered dither per channel on a coarse grid of screen pixels.
+vec3 ditherColor(vec3 c) {
+  vec3 s = pow(max(c, 0.0), vec3(1.0 / 2.2));
+  float peak = max(1.0, max(s.r, max(s.g, s.b)));
+  float b = bayer4(gl_FragCoord.xy / uPx);
+  vec3 q = max(s / peak - 0.03, 0.0) / 0.97;
+  return pow(vec3(step(b, q.r), step(b, q.g), step(b, q.b)) * peak, vec3(2.2));
+}
 `;
 
 /*
@@ -106,13 +120,14 @@ const GHOST_VERT = /* glsl */ `
       // PRISM: out along the cube's own line from the centre, the further bands further out.
       p.xyz += rad * fx * uSpread * 0.5 * (0.2 + 0.8 * uBand) * (1.0 + 0.35 * uPulse);
     } else {
-      // GLITCH: the copy jumps about in bursts, along the line from the centre and across it.
+      // GLITCH: the copy jumps about in bursts, along the line from the centre and across it —
+      // as far as PRISM's copies go, half what it once was.
       float t = floor(uTime * 12.0 + aSeed);
       float burst = clamp(step(0.72, gh(vec2(t, aSeed))) + uPulse * 0.8, 0.0, 1.0);
       vec3 side = normalize(cross(rad, vec3(0.0, 1.0, 0.0)) + vec3(1e-4));
       float jr = gh(vec2(t * 1.7, aSeed + uBand * 9.0)) - 0.5;
       float js = gh(vec2(t * 3.1, aSeed * 2.0 + uBand)) - 0.5;
-      p.xyz += (rad * (0.25 + jr) + side * js * 1.4) * fx * uSpread * (0.35 + burst);
+      p.xyz += (rad * (0.25 + jr) + side * js * 1.4) * fx * uSpread * 0.5 * (0.35 + burst);
       vAlpha *= 0.55 + 0.9 * burst;
     }
     vec4 mv = modelViewMatrix * p;
@@ -135,9 +150,11 @@ const GHOST_FRAG = /* glsl */ `
     // Mostly at the silhouette, so the copies read as coloured edges, not a wash of light.
     float a = vAlpha * uGain * (0.15 + 0.85 * pow(1.0 - vFacing, 1.5));
     if (abs(uStyle - ST_GLITCH) < 0.5) {
-      // GLITCH copies arrive in torn horizontal rows, with scanlines.
-      float row = floor(gl_FragCoord.y / 6.0);
-      a *= step(0.35, gh(vec2(row, floor(uTime * 14.0)))) * (0.75 + 0.25 * sin(gl_FragCoord.y * 3.14159));
+      // GLITCH copies arrive as noisy squares: a screen grid of blocks, each on or off and
+      // flickering in brightness, re-dealt every frame of the signal.
+      vec2 blk = floor(gl_FragCoord.xy / 9.0);
+      float t = floor(uTime * 14.0);
+      a *= step(0.4, gh(blk + t * 1.7)) * (0.45 + 0.8 * gh(blk * 1.3 + t));
     }
     gl_FragColor = vec4(uColor * a, 1.0);
   }`;
@@ -185,8 +202,9 @@ export class Ghosts {
   // Which copies a style shows, and in what colours. PRISM's six bands add up to about white.
   sync() {
     const style = STYLES[STYLE_UNIFORMS.uStyle.value].id;
-    const shown = this.source.visible;
+    const shown = this.source.visible && this.source.count > 0;
     this.meshes.forEach((m, b) => {
+      m.count = this.source.count;
       const u = m.material.uniforms;
       m.visible = false;
       if (!shown) return;

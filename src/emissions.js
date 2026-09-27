@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { STYLE_UNIFORMS, STYLE_GLSL, Ghosts } from './styles.js';
 
 /*
   SQNCR's emissions (`Nl`) in three dimensions. A struck cube throws marks onto the shells
@@ -7,29 +8,52 @@ import * as THREE from 'three';
   — same timings as SQNCR. Most marks are small dots; with EMISSION ≥ 2 a third are blocks.
 
   Drawn additively, so fading a mark's colour to black is the same as fading it out.
+
+  The marks take the shader style like the cubes do (see styles.js), at full strength while they
+  are lit: PRISM and GLITCH throw their copies off them along their line from the block's
+  centre, DITHER dithers them, FLAT draws them as solid flat squares and GLASS as small shards of
+  glass — those two shrink away instead of fading, since neither is light.
 */
 
 const POOL = 900;
 const RING_GAP = 0.55;
 const BLOCKS = [0.18, 0.18, 0.28, 0.28, 0.38, 0.5];
 const DOT = 0.1;
+const WHITE = new THREE.Color('#ffffff');
 
 export class Emissions {
   constructor(parent) {
     const geo = new THREE.BoxGeometry(1, 1, 1);
-    const mat = new THREE.MeshBasicMaterial({
+    // What the style copies read: (glow, white, strength) and (…, seed), as on the cubes.
+    this.stateAttr = new THREE.InstancedBufferAttribute(new Float32Array(POOL * 3), 3);
+    this.stateAttr.setUsage(THREE.DynamicDrawUsage);
+    geo.setAttribute('aState', this.stateAttr);
+    const spec = new THREE.InstancedBufferAttribute(new Float32Array(POOL * 4), 4);
+    for (let i = 0; i < POOL; i++) spec.array[i * 4 + 3] = (i * 0.754877) % 1 * 89;
+    geo.setAttribute('aSpec', spec);
+    this.light = new THREE.MeshBasicMaterial({
       color: 0xffffff,
       transparent: true,
       blending: THREE.AdditiveBlending,
       depthWrite: false,
       toneMapped: false,
     });
-    this.mesh = new THREE.InstancedMesh(geo, mat, POOL);
+    this.light.onBeforeCompile = (shader) => {
+      Object.assign(shader.uniforms, STYLE_UNIFORMS);
+      shader.fragmentShader = shader.fragmentShader
+        .replace('#include <common>', `#include <common>\n${STYLE_GLSL}`)
+        .replace('#include <opaque_fragment>', '#include <opaque_fragment>\nif (styleIs(ST_DITHER)) gl_FragColor.rgb = ditherColor(gl_FragColor.rgb);');
+    };
+    this.flat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+    this.glass = null; // made on first use, with the glass cubes' reflections
+    this.style = 'clean';
+    this.mesh = new THREE.InstancedMesh(geo, this.light, POOL);
     this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     this.mesh.frustumCulled = false;
     this.mesh.count = 0;
     this.mesh.setColorAt(0, new THREE.Color());
     parent.add(this.mesh);
+    this.ghosts = new Ghosts(this.mesh, { spread: 1.6, gain: 0.8 });
     this.marks = [];
     this.m = new THREE.Matrix4();
     this.c = new THREE.Color();
@@ -76,7 +100,17 @@ export class Emissions {
     }
   }
 
+  // Which style the marks are drawn in; \`envMap\` is what GLASS marks reflect.
+  setStyle(id, envMap = null) {
+    this.style = id;
+    if (id === 'glass' && !this.glass)
+      this.glass = new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.05, transmission: 1, ior: 1.5, thickness: 0.3, dispersion: 0.3, envMap, envMapIntensity: 0.8 });
+    this.mesh.material = id === 'flat' ? this.flat : id === 'glass' ? this.glass : this.light;
+  }
+
   update(t) {
+    // Solid marks (FLAT, GLASS) are not light: they shrink away rather than fade to black.
+    const solid = this.style === 'flat' || this.style === 'glass';
     this.marks = this.marks.filter((m) => m.deadAt > t);
     let n = 0;
     for (const m of this.marks) {
@@ -84,17 +118,21 @@ export class Emissions {
       const alpha = t <= m.fadeAt ? 1 : 1 - (t - m.fadeAt) / Math.max(0.001, m.deadAt - m.fadeAt);
       // Marks pop in at full size and fade; a slight scale-in over the first 40 ms keeps it from flickering.
       const grow = Math.min(1, (t - m.born) / 0.04);
-      this.s.setScalar(m.size * grow);
+      this.s.setScalar(m.size * grow * (solid ? Math.sqrt(alpha) : 1));
       this.p.set(m.x, m.y, m.z);
       this.m.compose(this.p, this.q, this.s);
       this.mesh.setMatrixAt(n, this.m);
-      this.c.copy(m.color).multiplyScalar(alpha * 0.85);
+      this.c.copy(m.color).multiplyScalar(solid ? 1 : alpha * 0.85);
+      if (this.style === 'glass') this.c.lerp(WHITE, 0.55);
       this.mesh.setColorAt(n, this.c);
+      this.stateAttr.array.set([alpha, 0, alpha * 0.9], n * 3);
       n++;
     }
     this.mesh.count = n;
     this.mesh.instanceMatrix.needsUpdate = true;
+    this.stateAttr.needsUpdate = true;
     if (this.mesh.instanceColor) this.mesh.instanceColor.needsUpdate = true;
+    this.ghosts.sync();
   }
 
   clear() {

@@ -23,7 +23,7 @@ import { Emissions } from './emissions.js';
 import { Transport } from './transport.js';
 import { unlock, audioReady, play, now, ctx as audioCtx } from './audio.js';
 import { randomSeed } from './rng.js';
-import { renderPanel, renderPlay, renderHint } from './ui.js';
+import { renderPanel, renderPlay, renderHint, renderKeys, placeKeys } from './ui.js';
 
 // ---- Settings, from the URL like SQNCR ------------------------------------------------------
 
@@ -179,29 +179,57 @@ const ring = (() => {
   for (let i = 0; i < 256; i++) pts.push(orbitPoint((i / 256) * Math.PI * 2));
   const line = new THREE.LineLoop(
     new THREE.BufferGeometry().setFromPoints(pts),
-    new THREE.LineBasicMaterial({ color: INK, transparent: true, opacity: 0.16 }),
+    new THREE.LineBasicMaterial({ color: INK, transparent: true, opacity: 0.07 }),
   );
   stage.add(line);
   return line;
 })();
 
-const TRAIL = 64;
+/*
+  The indicator's trail: a comet of soft white squares strung along the orbit behind it, largest
+  and brightest at the cube and shrinking and fading over the last stretch of the orbit.
+*/
+const TRAIL = 48;
+const TRAIL_ARC = 1.15; // radians of orbit behind the indicator
 const trail = (() => {
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(TRAIL * 3), 3));
-  const col = new Float32Array(TRAIL * 3);
-  for (let i = 0; i < TRAIL; i++) {
-    const a = Math.pow(i / (TRAIL - 1), 2) * 0.7;
-    col.set([a, a * 0.98, a * 0.93], i * 3);
-  }
-  geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
-  const line = new THREE.Line(
+  const fade = new Float32Array(TRAIL);
+  for (let i = 0; i < TRAIL; i++) fade[i] = i / (TRAIL - 1); // 0 at the tail, 1 at the indicator
+  geo.setAttribute('aFade', new THREE.BufferAttribute(fade, 1));
+  const points = new THREE.Points(
     geo,
-    new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, toneMapped: false }),
+    new THREE.ShaderMaterial({
+      uniforms: { uColor: { value: new THREE.Color('#ffffff') }, uViewH: { value: 800 }, uSize: { value: 0.34 } },
+      vertexShader: /* glsl */ `
+        attribute float aFade;
+        uniform float uViewH;
+        uniform float uSize;
+        varying float vFade;
+        void main() {
+          vFade = aFade;
+          vec4 mv = modelViewMatrix * vec4(position, 1.0);
+          float size = uSize * (0.12 + 0.88 * aFade * aFade);
+          gl_PointSize = size * projectionMatrix[1][1] * uViewH * 0.5 / -mv.z;
+          gl_Position = projectionMatrix * mv;
+        }`,
+      fragmentShader: /* glsl */ `
+        uniform vec3 uColor;
+        varying float vFade;
+        void main() {
+          vec2 q = abs(gl_PointCoord - 0.5) * 2.0;
+          float edge = 1.0 - smoothstep(0.55, 1.0, max(q.x, q.y));
+          gl_FragColor = vec4(uColor * edge * pow(vFade, 1.6) * 0.55, 1.0);
+        }`,
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      toneMapped: false,
+    }),
   );
-  line.frustumCulled = false;
-  stage.add(line);
-  return line;
+  points.frustumCulled = false;
+  stage.add(points);
+  return points;
 })();
 
 /*
@@ -253,7 +281,7 @@ function placeIndicator(theta) {
   const arr = trail.geometry.attributes.position.array;
   const v = new THREE.Vector3();
   for (let i = 0; i < TRAIL; i++) {
-    orbitPoint(theta - ((TRAIL - 1 - i) / TRAIL) * 0.9, v);
+    orbitPoint(theta - ((TRAIL - 1 - i) / (TRAIL - 1)) * TRAIL_ARC, v);
     arr[i * 3] = v.x;
     arr[i * 3 + 1] = v.y;
     arr[i * 3 + 2] = v.z;
@@ -265,6 +293,7 @@ function placeIndicator(theta) {
 
 let world = null; // { pieces, physics, cubes, heat, buckets, lastTouch }
 const emissions = new Emissions(cluster);
+emissions.setStyle(state.shader, glassEnv);
 
 function stepOf(rest) {
   const p = rest.clone().applyQuaternion(ORBIT_TILT.clone().invert());
@@ -382,9 +411,9 @@ function dressCubes() {
   // DARK's resting cubes: the profile's near-black, lifted a little so the block reads.
   world.rest = new THREE.Color(pr.rest).lerp(new THREE.Color('#ffffff'), 0.07);
   world.restInk = world.rest.clone().lerp(new THREE.Color('#ffffff'), 0.08);
-  // FLAT has no light to show the block's form, so its resting grey is lighter still.
-  world.flatRest = new THREE.Color(pr.rest).lerp(new THREE.Color('#a4a39e'), 0.36);
-  world.flatInk = world.flatRest.clone().lerp(new THREE.Color('#ffffff'), 0.12);
+  // FLAT's resting grey: a little lighter than DARK's, one flat tone per cube.
+  world.flatRest = new THREE.Color(pr.rest).lerp(new THREE.Color('#a4a39e'), 0.08);
+  world.flatInk = world.flatRest.clone().lerp(new THREE.Color('#ffffff'), 0.1);
   cubes.setPatterns(pieces.map((_, i) => textureSpec(i)), world.ink);
   cubes.setGlass(glassCubes(), glassEnv);
   cubes.setLook({ ...pr.material, peak: pr.peak, texture: state.textureSet !== 'none', emit: pr.fx.glow });
@@ -392,20 +421,18 @@ function dressCubes() {
 }
 
 /*
-  GLASS turns one kind of cube to glass: the part whose share of the block is nearest an eighth,
-  so 10–15 % of it (trimmed or topped up with cubes that have no note if no part is close).
+  GLASS turns whole kinds of cube to glass: parts are taken smallest first while the glass stays
+  under 35 % of the block, then cubes with no note top it up to at least 25 %.
 */
 function glassCubes() {
   const n = world.pieces.length;
   const byLane = {};
   world.pieces.forEach((_, i) => (byLane[laneOf(world.mapping, i) ?? 'idle'] ??= []).push(i));
-  const lanes = Object.entries(byLane).filter(([l]) => l !== 'idle');
-  lanes.sort((a, b) => Math.abs(a[1].length / n - 0.125) - Math.abs(b[1].length / n - 0.125));
-  const pick = [...(lanes[0]?.[1] ?? [])];
-  const lo = Math.ceil(n * 0.1);
-  const hi = Math.floor(n * 0.15);
-  for (const i of byLane.idle ?? []) if (pick.length < lo) pick.push(i);
-  return pick.slice(0, hi);
+  const lanes = Object.entries(byLane).filter(([l]) => l !== 'idle').sort((a, b) => a[1].length - b[1].length);
+  const pick = [];
+  for (const [, idx] of lanes) if (pick.length + idx.length <= n * 0.35) pick.push(...idx);
+  for (const i of byLane.idle ?? []) if (pick.length < n * 0.25) pick.push(i);
+  return pick;
 }
 
 // What the current texture set prints on cube i: the pattern and scale for its part.
@@ -427,7 +454,7 @@ function applyProfile() {
   // The indicator and its glow are white in every profile — a breath of the accent at most.
   indicatorLight.color.copy(INDICATOR_WHITE).lerp(accent, 0.12);
   ring.material.color.copy(accent);
-  trail.material.color.copy(accent);
+  trail.material.uniforms.uColor.value.copy(INDICATOR_WHITE).lerp(accent, 0.15);
   cursor.material.color.copy(accent);
   halo.material.color.copy(INDICATOR_WHITE).lerp(accent, 0.06);
   if (world) dressCubes();
@@ -778,6 +805,7 @@ canvas.addEventListener('pointerleave', () => {
 const panel = document.getElementById('panel');
 const hint = document.getElementById('hint');
 const playEl = document.getElementById('play');
+const keysEl = document.getElementById('keys');
 
 const act = {
   async togglePlay() {
@@ -829,6 +857,7 @@ const act = {
     const ids = SHADER_STYLES.map((st) => st.id);
     state.shader = ids[(ids.indexOf(state.shader) + 1) % ids.length];
     setStyle(state.shader);
+    emissions.setStyle(state.shader, glassEnv);
     // Leaving FLAT in the painted look: put the painted colours back.
     if (world && state.look === 'painted' && state.shader !== 'flat') world.cubes.restore();
     syncUrl();
@@ -940,7 +969,8 @@ function refreshUi() {
   );
   renderPlay(playEl, state, act);
   timeline.setBpm(state.bpm);
-  renderHint(hint, state, world ? world.pieces.length : 0);
+  renderHint(hint, state);
+  renderKeys(keysEl, state, world ? world.pieces.length : 0, panel.querySelector('.help'));
 }
 
 window.addEventListener('keydown', (e) => {
@@ -963,6 +993,7 @@ window.addEventListener('keydown', (e) => {
 
 // Keep the block centred in the space above the timeline: shift the view, not the camera.
 function frameView() {
+  trail.material.uniforms.uViewH.value = window.innerHeight * renderer.getPixelRatio();
   const w = window.innerWidth;
   const h = window.innerHeight;
   camera.aspect = w / h;
@@ -972,6 +1003,7 @@ function frameView() {
 
 window.addEventListener('resize', () => {
   renderer.setSize(window.innerWidth, window.innerHeight);
+  placeKeys(keysEl, panel.querySelector('.help'));
   composer.setSize(window.innerWidth, window.innerHeight);
   frameView();
 });

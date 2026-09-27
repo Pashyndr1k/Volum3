@@ -80,27 +80,20 @@ float patternMask(float id, vec2 uv, float size, float act, float dens) {
   the finished shading.
 */
 const SURFACE_GLSL = /* glsl */ `
-// GLITCH: this cube's face torn into slices shifted sideways, in bursts.
+// GLITCH: this cube's faces broken into noisy squares, in bursts: a grid of blocks, some
+// shifted off their place in the print, some dropped to one coarse sample.
 vec2 glitchUv(vec2 uv, float fx, float seed, out float torn) {
   float t = floor(uTime * 14.0 + seed);
   float burst = clamp(step(0.75, styleHash(vec2(t, seed))) + uPulse * 0.8, 0.0, 1.0);
   float amt = fx * (0.3 + 0.7 * burst);
-  float rows = 5.0 + floor(styleHash(vec2(t, seed + 1.0)) * 12.0);
-  float row = floor(uv.y * rows);
-  torn = step(1.0 - amt * 0.75, styleHash(vec2(row, t + seed)));
-  uv.x += torn * (styleHash(vec2(row * 7.1, t)) - 0.5) * 1.4 * amt;
-  // Now and then the face drops to a few coarse blocks.
-  if (styleHash(vec2(t * 0.7, seed * 3.0)) > 1.0 - 0.4 * amt) uv = (floor(uv * 4.0) + 0.5) / 4.0;
+  float cells = 3.0 + floor(styleHash(vec2(t, seed + 1.0)) * 5.0);
+  vec2 cell = floor(uv * cells);
+  torn = step(1.0 - amt * 0.7, styleHash(cell + vec2(t * 1.3, seed)));
+  vec2 shift = vec2(styleHash(cell * 7.1 + t), styleHash(cell * 3.7 - t)) - 0.5;
+  uv += torn * shift * 0.7 * amt;
+  if (torn > 0.5 && styleHash(cell + seed * 5.0 + t) > 0.5) uv = (floor(uv * cells) + 0.5) / cells;
   return uv;
 }
-
-// The 4 x 4 Bayer threshold, built from the 2 x 2 one: [0 2; 3 1].
-float bayer2(vec2 q) { return mod(2.0 * q.x + 3.0 * q.y, 4.0); }
-float bayer4(vec2 p) {
-  vec2 q = mod(floor(p), 4.0);
-  return (4.0 * bayer2(mod(q, 2.0)) + bayer2(floor(q / 2.0)) + 0.5) / 16.0;
-}
-
 `;
 
 export class Cubes {
@@ -182,7 +175,7 @@ export class Cubes {
           float m = patternMask(vPattern, fuv, vSize, act, vDensity) * uTexture;
           if (glitch) {
             // The print split R / B across the tear.
-            float split = (0.04 + 0.12 * torn) * vFx;
+            float split = (0.02 + 0.06 * torn) * vFx;
             float mr = patternMask(vPattern, fuv + vec2(split, 0.0), vSize, act, vDensity) * uTexture;
             float mb = patternMask(vPattern, fuv - vec2(split, 0.0), vSize, act, vDensity) * uTexture;
             vec3 base = diffuseColor.rgb;
@@ -191,16 +184,13 @@ export class Cubes {
             diffuseColor.b = mix(base.b, vInk.b, mb * 0.85);
           } else diffuseColor.rgb = mix(diffuseColor.rgb, vInk, m * 0.85);
           diffuseColor.rgb = mix(diffuseColor.rgb, uPeak, vWhite);
-          // FLAT: the colour as it is, no light on it; a thin darker line round each face.
-          vec2 e2 = min(vFaceUv, 1.0 - vFaceUv);
-          float edgeD = min(e2.x, e2.y);
-          float edgeW = fwidth(edgeD) * 1.2 + 0.012;
-          vec3 flatCol = mix(diffuseColor.rgb * 0.38, diffuseColor.rgb, smoothstep(edgeW, edgeW * 1.8, edgeD));
-          flatCol *= 1.0 + vGlow * uEmit * 0.5;
+          // FLAT: the colour as it is, one tone per cube, no light and no line on it.
+          vec3 flatCol = diffuseColor.rgb * (1.0 + vGlow * uEmit * 0.5);
           if (glitch) {
-            // Torn rows: colours rotated, a flash of signal.
+            // Torn squares: colours rotated, and a noisy flash of signal in each.
+            float noise = styleHash(floor(vFaceUv * 24.0) + floor(uTime * 20.0));
             diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.gbr, torn * vFx);
-            totalEmissiveRadiance += diffuseColor.rgb * torn * vFx * 0.6;
+            totalEmissiveRadiance += diffuseColor.rgb * torn * vFx * (0.2 + 0.7 * noise);
           }
           totalEmissiveRadiance += diffuseColor.rgb * vGlow * uEmit;
           if (uIrid > 0.0) {
@@ -223,16 +213,8 @@ export class Cubes {
           '#include <opaque_fragment>',
           `#include <opaque_fragment>
           if (styleIs(ST_FLAT)) gl_FragColor.rgb = flatCol;
-          if (styleIs(ST_DITHER) && vFx > 0.001) {
-            // DITHER: ordered dither per channel, on a coarse grid of screen pixels.
-            vec3 c = gl_FragColor.rgb;
-            vec3 s = pow(max(c, 0.0), vec3(1.0 / 2.2));
-            float peak = max(1.0, max(s.r, max(s.g, s.b)));
-            float b = bayer4(gl_FragCoord.xy / uPx);
-            vec3 q = max(s / peak - 0.03, 0.0) / 0.97;
-            vec3 styled = vec3(step(b, q.r), step(b, q.g), step(b, q.b)) * peak;
-            gl_FragColor.rgb = mix(c, pow(styled, vec3(2.2)), smoothstep(0.0, 0.6, vFx));
-          }`,
+          if (styleIs(ST_DITHER) && vFx > 0.001)
+            gl_FragColor.rgb = mix(gl_FragColor.rgb, ditherColor(gl_FragColor.rgb), smoothstep(0.0, 0.6, vFx));`,
         );
     };
 

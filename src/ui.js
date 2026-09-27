@@ -123,7 +123,7 @@ export function renderPanel(el, state, act, logoColors = []) {
   meter(cube, 'CAVES', 'caves', 1, 3, 'How hollow the block is (rebuilds it)');
   word(cube, 'NEW', act.generate, { title: `A new block (G). This one is #${state.seed.toString(36).toUpperCase()}, kept in the URL` });
   word(cube, 'TIMELINE', act.toggleTimeline, { on: state.timeline, title: 'Show / hide the timeline (L)' });
-  word(cube, '?', act.toggleKeys, { on: state.keys, title: 'Keyboard shortcuts' });
+  word(cube, '?', act.toggleKeys, { on: state.keys, title: 'Keyboard shortcuts', cls: 'help' });
 }
 
 // The play controls, centred under the settings.
@@ -142,14 +142,21 @@ export function renderPlay(el, state, act) {
   el.append(b, m);
 }
 
-export function renderHint(el, state, count) {
+export function renderHint(el, state) {
   el.innerHTML = '';
   if (!state.unlocked) {
     const s = document.createElement('div');
     s.textContent = 'CLICK ANYWHERE FOR SOUND';
     el.append(s);
   }
+}
+
+// The key list: a small frame hung under the \`?\` in the top panel, its right edge on the \`?\`'s.
+export function renderKeys(el, state, count, anchor) {
+  el.innerHTML = '';
+  el.hidden = !state.keys;
   if (!state.keys) return;
+  placeKeys(el, anchor);
   const grid = document.createElement('div');
   grid.className = 'keys';
   for (const [k, what] of KEYS) {
@@ -167,4 +174,11 @@ export function renderHint(el, state, count) {
       ? `${count} CUBES · HOLD THE POINTER ON THE BLOCK · DRAG TO SPIN`
       : `${count} CUBES · HOVER A CUBE TO TOUCH IT · DRAG TO LOOK`;
   el.append(n);
+}
+
+export function placeKeys(el, anchor) {
+  if (!anchor || el.hidden) return;
+  const r = anchor.getBoundingClientRect();
+  el.style.top = `${Math.round(r.bottom + 12)}px`;
+  el.style.right = `${Math.max(12, Math.round(window.innerWidth - r.right))}px`;
 }

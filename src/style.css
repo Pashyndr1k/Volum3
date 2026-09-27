@@ -96,11 +96,11 @@ body {
   text-transform: uppercase;
 }
 #play .play-btn {
-  font-size: 15px;
+  font-size: 12px;
   font-weight: 500;
   letter-spacing: 0.14em;
-  line-height: 20px;
-  padding: 8px 22px;
+  line-height: 16px;
+  padding: 6px 18px;
   border: 1px solid #3a3935;
   color: var(--ink);
   cursor: pointer;
@@ -121,15 +121,32 @@ body {
   pointer-events: none;
 }
 #hint:empty { display: none; }
-#hint .keys { display: grid; grid-template-columns: 44px auto; gap: 0 10px; margin: 4px 0 6px; justify-content: center; text-align: left; }
-#hint .key { color: var(--ink); }
+/* The key list: a small frame at the right, under the ? that opens it. */
+#keys {
+  position: fixed;
+  right: 20px;
+  top: 44px;
+  padding: 8px 12px 9px;
+  background: rgba(0, 0, 0, 0.72);
+  border: 1px solid #1e1e1d;
+  font-size: 10px;
+  line-height: 16px;
+  letter-spacing: 0.08em;
+  color: var(--dim);
+  text-transform: uppercase;
+  pointer-events: none;
+}
+#keys { max-width: 300px; }
+#keys[hidden] { display: none; }
+#keys .keys { display: grid; grid-template-columns: 44px auto; gap: 0 10px; margin-bottom: 6px; }
+#keys .key { color: var(--ink); }
 
 @media (max-width: 640px) {
   #top { left: 12px; right: 12px; top: 12px; gap: 10px; }
   #panel { font-size: 10px; }
   #panel .block { padding: 0 8px; gap: 6px 8px; flex-wrap: wrap; justify-content: center; white-space: normal; border-left: 0; }
   #panel .brand { width: 100%; text-align: center; margin: 0 0 2px; }
-  #play .play-btn { font-size: 13px; padding: 6px 16px; }
+  #play .play-btn { font-size: 11px; padding: 5px 14px; }
 }
 
 /*

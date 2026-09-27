@@ -54,12 +54,16 @@ post effects. Switch profiles with **P** or PROFILE in the top panel. The URL ke
 | RISO | p06 p10 p11 p12 p15 p16 | `#E74C31 #DA236C #F5E7D9 #36D2D9 #EAB65A #2D82CE #8993EF #E1F318` | print black `#211718` | very matte, little bloom, heavy grain, slight misregistration; marks thrown in the four ink colours |
 | BONE | the video, p04 p07 p09 | bone and paper `#EFEEE5 #E9E8DB #DCCBAD …`, amber `#EDAE54` for the melody | `#0B0B0E` | strong red/blue fringe; marks in red / amber / blue / bone, like the video's edges |
 | PRISM | c13 p18 p19 | silvers and whites `#C4CCD8 #FAF7F1 #DEDBD5 … #FFFFFF` on graphite `#2A2C30` | `#463A3A` | metallic (0.55), glossy, thin-film rainbow at grazing angles, fringe |
+| TONIC | c04 c15 c24 | pastel pop: `#FF85C0 #D9F860 #FFF176 #81D4FA #C8C3FF #913CDC #FFB3D9 #B8F28A` | grape, pink, sky or yellow per part | satin; soft bloom |
+| SIGNAL | c14 | only cyan `#00F0FF` and signal red `#FF0055` (with their tints) on graphite `#1A1A1A` | `#1A1A1A` | semi-gloss; marks in cyan and red; fringe |
+| EMBER | c06 c12 | dot-matrix embers: `#E24A3B #F4C6C2 #F28C6A #8A98C4 #5C6C9C #B8322A #D9D2E9 #FFB08A` | `#141318` | matte; strongest bloom after AFTERGLOW, grain; warm peak `#FFF3EC` |
+| SPECTRUM | c15 c18 c19 | sliced rainbow forms: `#6A1BFF #FF7A5C #FFE655 #2BFF88 #F5A3E0 #2F5BFF #BCC7CB #FF3FA4` | `#101218` | thin-film rainbow at grazing angles, fringe |
 
 Each profile also sets:
 * `rest`: a cube at rest in DARK.
 * `idle`: a cube with no note in PAINTED.
 * `peak`: what a hard-thrown cube burns to.
-* `accent`: the trail, orbit ring and touch circle.
+* `accent`: the orbit ring and touch circle, and a breath of the indicator's trail.
 * `glow`: how much light a struck cube gives off. Bright palettes need less, or bloom washes the
   frame out.
 
@@ -111,10 +115,10 @@ Switch with **S** or SHADER; the URL keeps `shader=`.
 | Style | What it does | From |
 |---|---|---|
 | CLEAN | plain lit cubes | — |
-| FLAT | **No light and no shade.** Every face is one flat colour: grey at rest, its part's colour while struck, white when thrown furthest, with a thin darker line round each face so the cubes still read. It works this way in both looks. | — |
+| FLAT | **No light and no shade.** Every cube is one flat tone: a dark grey at rest, its part's colour while struck, white when thrown furthest. No lines, no shading, in both looks. | — |
 | PRISM | **Splits white light into its spectrum, radiating from the block's centre.** Every thrown cube casts six spectral copies of itself out along *its own* line from the centre, red nearest and violet furthest, so the rainbows fan out in every direction at once. Its surface carries faint rainbow bands running outward from the centre. | c13, p19 |
-| GLITCH | **A damaged digital signal on each cube.** Its face is torn into slices shifted sideways, its print split R / B across the tear, its colours rotated in torn rows, and sometimes it drops to coarse blocks. A red and a cyan copy of it jump about its line from the centre in torn scanlines. Bursts come at random and on every kick and snare. | p14, p19, c27 |
-| GLASS | **One kind of cube becomes clear glass** — the part whose share of the block is nearest an eighth, 10–15 % of the cubes. It is three.js's physically based transmission: the block behind is refracted through each cube (IOR 1.5, over its thickness) and split by dispersion, with a soft studio reflected in its faces. Struck, the glass takes its part's colour and glows from inside. The other cubes stay as in CLEAN. | c13 |
+| GLITCH | **A damaged digital signal on each cube.** Its faces break into noisy squares: some shifted off their place in the print, some dropped to one coarse sample, colours rotated and flickering with noise; the print is split R / B. A red and a cyan copy of it jump about its line from the centre (as far as PRISM's copies go), made of noisy on/off screen squares. Bursts come at random and on every kick and snare. | p14, p19, c27 |
+| GLASS | **Whole kinds of cube become clear glass**: parts are taken smallest first while the glass stays under 35 % of the block, then cubes with no note top it up to at least 25 % (30 of 92 on the default block). It is three.js's physically based transmission: the block behind is refracted through each cube (IOR 1.5, over its thickness) and split by dispersion, with a soft studio reflected in its faces. Struck, the glass takes its part's colour and glows from inside. The other cubes stay as in CLEAN. | c13 |
 | DITHER | the cube's shading as an ordered 4 × 4 dither per channel on coarse screen pixels: eight colours | p04, the flower video |
 
 How it works: each cube carries its strength in an instance attribute, set every frame from its
@@ -125,11 +129,18 @@ strength, so they move and turn with it. GLASS moves its cubes from the main ins
 into one of their own with a `MeshPhysicalMaterial` (`transmission` 1). The styles combine freely
 with the colour profiles, the texture sets and both looks.
 
+**The marks thrown round a struck cube** (the activation zone) take the style too, at full
+strength while they are lit: PRISM and GLITCH throw their copies off every mark, DITHER dithers
+them, FLAT draws them as solid flat squares and GLASS as small glass shards; those two shrink
+away instead of fading.
+
 ## The indicator
 
 The indicator is a cube like the block's own (same rounded shape and shader, so the styles play
 on it) burning white, with a white halo and light, in every profile. Only the orbit ring, trail
-and touch circle take the profile's accent.
+and touch circle take the profile's accent. Behind it runs a comet trail: soft white squares
+strung along the last 1.15 radians of the orbit, shrinking and fading toward the tail. The orbit
+ring itself is a faint hairline (7 % opacity).
 
 ## The logo
 
