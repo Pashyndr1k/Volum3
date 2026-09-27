@@ -49,9 +49,10 @@ Every setting is saved in the URL, so a link reproduces the whole setup.
 ## The timeline
 
 The small frame at the bottom centre is the pattern the indicator plays: one orbit laid flat,
-64 sixteenths (4 bars). It shows only the lanes in use (MELODY always; then CHORD, BASS, PERC,
-OPEN, HAT, SNARE, KICK as needed). Marks are in one ink, and each lane's letter is in the colour
-its cubes take. The playhead is the indicator's angle.
+64 sixteenths (4 bars). It always shows all eight lanes (MELODY, CHORD, BASS, PERC, OPEN, HAT,
+SNARE, KICK), so it keeps one height and every lane stays in place whatever the pattern. A lane
+with nothing in it stays empty and its letter dims. Marks are in one ink, and each lane's letter
+is in the colour its cubes take. The playhead is the indicator's angle.
 
 | Input | Action |
 |---|---|

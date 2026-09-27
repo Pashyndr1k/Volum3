@@ -4,8 +4,9 @@ import { pairFor } from './palette.js';
 
 /*
   The timeline: one orbit of the pattern laid flat — 64 sixteenths across, a thin row per part.
-  Kept small and quiet on purpose: marks in one ink, bar lines only, and only the lanes that have
-  something in them. The one bit of colour is each lane's letter, in the colour its cubes take.
+  Kept small and quiet on purpose: marks in one ink, bar lines only. Every lane is always shown,
+  so the frame keeps one height whatever the pattern; a lane with nothing in it stays empty and
+  its letter dims. The one bit of colour is each lane's letter, in the colour its cubes take.
   The playhead is the indicator's angle.
 
   Click a mark to remove it, an empty spot to add one, a lane's letter to mute it. The header:
@@ -59,9 +60,10 @@ export class Timeline {
 
   setPattern(p) {
     this.pattern = p;
-    // Only the lanes in use (the melody always), in the usual order: tune on top, kick at the bottom.
-    const used = new Set(p.events.map((e) => e.lane));
-    this.lanes = LANES.map((l) => l.id).filter((id) => id === 'melody' || used.has(id));
+    // Every lane, always, tune on top and kick at the bottom — so the frame keeps one height and
+    // each lane keeps its place whatever the pattern. Lanes with nothing in them just stay empty.
+    this.used = new Set(p.events.map((e) => e.lane));
+    this.lanes = LANES.map((l) => l.id);
     this.renderHead();
     this.resize();
   }
@@ -175,7 +177,7 @@ export class Timeline {
     c.textAlign = 'left';
     for (const id of this.lanes) {
       const voice = VOICE.get(p.voices[id]);
-      c.fillStyle = this.muted.has(id) ? FAINT : pairFor(voice ? voice.index : 0).bg;
+      c.fillStyle = this.muted.has(id) || !this.used.has(id) ? FAINT : pairFor(voice ? voice.index : 0).bg;
       c.fillText(LETTER[id], 0, this.laneY(id) + (id === 'melody' ? 5 : LANE_H / 2 + 0.5));
     }
 
