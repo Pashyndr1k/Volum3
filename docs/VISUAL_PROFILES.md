@@ -41,7 +41,7 @@ cube" of extruded pixels) and p19 (glitch-sliced chrome) show the same grid lang
 ## Colour profiles (`src/profiles.js`)
 
 A profile is a whole look: the cube colour per part, the ink its pattern is printed in, the rest
-and peak colours, the marks thrown on a hit, the indicator's colour, the surface finish and the
+and peak colours, the marks thrown on a hit, the accent of the orbit, the surface finish and the
 post effects. Switch profiles with **P** or PROFILE in the top panel. The URL keeps `profile=`.
 
 | Profile | From | Parts (kick · snare · hat · open · perc · bass · chord · melody) | Ink | Finish / FX |
@@ -59,7 +59,7 @@ Each profile also sets:
 * `rest`: a cube at rest in DARK.
 * `idle`: a cube with no note in PAINTED.
 * `peak`: what a hard-thrown cube burns to.
-* `accent`: the indicator, trail, orbit ring and touch circle.
+* `accent`: the trail, orbit ring and touch circle.
 * `glow`: how much light a struck cube gives off. Bright palettes need less, or bloom washes the
   frame out.
 
@@ -82,50 +82,54 @@ amounts read as they look:
 
 ## Texture sets (`src/textures.js`)
 
-Texture sets work like colour profiles: each set says what is printed on each kind of cube, as
-a pattern plus a scale. Switch with **X** or TEXTURE in the top menu; the URL keeps
-`texture=`. Scale works in one of two ways:
-* **Per unit**: a medium cube carries twice as many marks as a small one.
-* **Per face** (`fit`): one mark or glyph per face, whatever the cube's size.
+Texture sets work like colour profiles: each set says what is printed on each kind of cube.
+Switch with **X** or TEXTURE in the top menu; the URL keeps `texture=`. Every set prints one
+mark per face, centred and **larger than the face**, so the face's edges crop it into a
+supergraphic, the way the posters use it.
 
-![texture sets](img/texture-sets.jpg)
+![texture sets: MACRO and MACRO TYPE](img/texture-sets.jpg)
 
-| Set | Scale | What each part gets | From |
-|---|---|---|---|
-| NONE | — | plain cubes | — |
-| GRAPHIC | 4 per unit | kick: target · snare: X marks · hat: halftone dots · open: rings · perc: checkerboard · bass: bars · chord: plus signs · melody: hatching · no note: hairline grid | the pattern boards |
-| MICRO | 9 per unit | the same marks, as a fine screen | p00, p08 |
-| MACRO | 1 per face | the same marks, one big one per face (targets get 2–3 rings) | p07, p16, p17 |
-| TYPE | 1 per face | **large letters and numbers**: the part's letter on the sides (K S H O P B C M); on top, the beat a drum lands on (1–4) or the scale degree a tuned part plays (1–7) | c09, p02 |
-| DOT MATRIX | 1 per face | the same glyphs as a dot-matrix sign | p09, the flower video |
-| BITMAP | 5–10 per unit | 1-bit pixel noise, denser for the heavy parts (kick 70 %, hat 25 %); it reshuffles while the cube is lit | p04, the flower video |
-| SIGNAL | 3–10 per unit | broken horizontal bands that slide sideways when struck, like a bad video line | p10, p14 |
-| MIXED | 2, 4 or 8 per unit | every face picks its own mark and scale | p12, p06 |
+| Set | What each part gets | From |
+|---|---|---|
+| NONE | plain cubes | — |
+| MACRO (default) | kick: a target running off the face · snare: an X larger than the face · hat: one big dot · open: a ring touching the edges · perc: a checker cut to a few cells · bass: wide bars · chord: a plus sign larger than the face · melody: broad hatching · no note: a hairline frame | p07, p16, p17 |
+| MACRO TYPE | **oversized letters and numbers** at 1.8× the face, cropped by it: the part's letter on the sides (K S H O P B C M); on top, the beat a drum lands on (1–4) or the scale degree a tuned part plays (1–7) | c09, p02 |
 
 All marks are drawn in the cube shader (`src/cubes.js`), so they stay sharp at any distance, and
-they swell when a cube is struck: dots grow, lines and glyphs get bolder, checkers fill in,
-pixels reshuffle, bands slide. Glyphs come from an atlas drawn once on a canvas in DM Mono. The
-dot-matrix version is made from the same letters by measuring how much of each cell of a 7 × 9
-grid a letter covers.
+they swell when a cube is struck: dots grow, lines and letters get bolder, checkers fill in.
+Letters come from an atlas drawn once on a canvas in DM Mono.
 
 ## Shader styles (`src/styles.js`)
 
-A style is how the finished frame is shown: one full-screen shader at the very end. It receives
-the time and a beat pulse, which jumps on every kick and snare and fades, so the look moves with
-the music. Switch with **S** or SHADER; the URL keeps `shader=`.
+A style is how **the cubes and the indicator** are drawn. It lives on each cube, not on the frame:
+the background, orbit, trail and thrown marks stay clean. Its strength is per cube: 0 while a
+cube sits in its place in the block, rising to 1 as it is thrown to its furthest. A resting
+block looks plain; the effect blooms out of it with every hit, strongest on the cubes that fly
+furthest. The indicator, always far out on its orbit, always carries it, and flares on the beat.
+Switch with **S** or SHADER; the URL keeps `shader=`.
 
-![shader styles](img/shader-styles.jpg)
+![shader styles: CLEAN, PRISM, GLITCH / HALFTONE, DITHER, in the DARK look](img/shader-styles.jpg)
 
 | Style | What it does | From |
 |---|---|---|
-| CLEAN | the frame as rendered | — |
-| PRISM | **Splits light into its spectrum.** Every pixel is sampled 16 times along a line from the centre, each sample weighted by a band of the rainbow, so white edges fan out red-to-violet. It widens toward the edges and on the beat. Bright points also throw a spectrum streak beside them, like a beam through a prism. | c13, p19 |
-| GLITCH | **A damaged digital video signal.** Slices tear sideways, blocks drop to low resolution, R and B split along the line, chroma smears, and the frame rolls now and then. Scanlines, noise lines and crushed colour are always there at a low level, and burst at random and on every kick and snare. | p14, p19, c27 |
-| HALFTONE | an LED dot screen: rotated grids of red, green and blue dots sized by the colour beneath | c06, c12, c29 |
-| DITHER | ordered 4 × 4 dither per channel on a coarse pixel grid; eight colours, near-black kept black | p04, the flower video |
+| CLEAN | plain cubes | — |
+| PRISM | **Splits white light into its spectrum, radiating from the block's centre.** Every thrown cube casts six spectral copies of itself out along *its own* line from the centre, red nearest and violet furthest, so the rainbows fan out in every direction at once. Its surface carries rainbow bands running outward from the centre, strongest on the faces turned away from it. | c13, p19 |
+| GLITCH | **A damaged digital signal on each cube.** Its face is torn into slices shifted sideways, its print split R / B across the tear, its colours rotated in torn rows, and sometimes it drops to coarse blocks. A red and a cyan copy of it jump about its line from the centre in torn scanlines. Bursts come at random and on every kick and snare. | p14, p19, c27 |
+| HALFTONE | the cube's own shading redrawn as rotated red, green and blue dot screens on its faces | c06, c12, c29 |
+| DITHER | the cube's shading as an ordered 4 × 4 dither per channel on coarse screen pixels: eight colours | p04, the flower video |
 
-The styles combine freely with the colour profiles, the texture sets and both looks. Each
-profile's own fringe and grain still run before the style.
+How it works: each cube carries its strength in an instance attribute, set every frame from its
+displacement (`smoothstep(0.12, reach, offset)`, with `reach` the throw a hard hit gives at the
+current FORCE). The surface part runs in the cube shader. The copies are extra draws of the same
+instanced geometry and matrices, additive and pushed along each cube's radial direction by its
+strength, so they move and turn with it. The styles combine freely with the colour profiles,
+the texture sets and both looks.
+
+## The indicator
+
+The indicator is a cube like the block's own (same rounded shape and shader, so the styles play
+on it) burning white, with a white halo and light, in every profile. Only the orbit ring, trail
+and touch circle take the profile's accent.
 
 ## Adding a profile
 
@@ -133,6 +137,8 @@ Add an entry to `PROFILES` in `src/profiles.js`: 8 part colours, an ink (one col
 part), `rest`, `idle`, `peak`, `accent`, `marks` (`'lane'` or a list of colours), `material`
 (`roughness`, `metalness`, `iridescence` 0/1) and `fx` (`bloom` [strength, radius, threshold],
 `glow`, `fringe`, `grain`). It will appear in the PROFILE switch. To add a texture set, add an entry to `TEXTURE_SETS` in `src/textures.js`: a `{ pattern, density,
-fit?, fill? }` for each part and for `idle`. To add a new pattern, add a branch to `patternMask`
-in `src/cubes.js` and give it an id in `PATTERNS`. To add a shader style, add a fragment shader
-to `SHADERS` in `src/styles.js` and an entry to `STYLES`.
+fit: true, scale? }` for each part and for `idle` (density below 1 makes the mark larger than the
+face; `scale` sizes glyphs). To add a new pattern, add a branch to `patternMask` in
+`src/cubes.js` and give it an id in `PATTERNS`. To add a shader style, add an entry to `STYLES` in
+`src/styles.js` and its branch to the cube shader in `src/cubes.js` (by the index of `uStyle`);
+copies thrown along the radial direction go in `Ghosts`.

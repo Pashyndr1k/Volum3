@@ -73,8 +73,8 @@ is in the colour its cubes take. The playhead is the indicator's angle.
 | **V** / LOOK PAINTED | Every cube wears its part's colour; cubes with no note are dark |
 | **V** / LOOK DARK | Every cube is dark grey and colourless at rest. Struck, it lights up in a vivid version of its colour; the further it is thrown from its place in the block, the closer it gets to white (fully white at a hard hit's usual reach for the current FORCE). Small wobbles from a neighbour's hit leave it grey. |
 | **P** / PROFILE | Cycle the colour profiles built from the reference boards: HALFOF8, DOPAMINE, FJORD, CANDY, AFTERGLOW, RISO, BONE, PRISM. See [VISUAL_PROFILES.md](VISUAL_PROFILES.md). |
-| **X** / TEXTURE | Texture set: NONE, GRAPHIC, MICRO, MACRO, TYPE (big letters and numbers), DOT MATRIX, BITMAP, SIGNAL, MIXED |
-| **S** / SHADER | Shader style for the whole frame: CLEAN, PRISM (light split into a rainbow), GLITCH (digital video interference), HALFTONE, DITHER |
+| **X** / TEXTURE | Texture set: NONE, MACRO (oversized marks cropped by the face), MACRO TYPE (oversized letters and numbers) |
+| **S** / SHADER | Shader style on the cubes and the indicator, strongest on the cubes thrown furthest: CLEAN, PRISM (a rainbow radiating out from the centre), GLITCH (digital signal damage), HALFTONE, DITHER |
 | **?** | Show the keyboard shortcuts |
 
 The URL keeps `style` and `pattern`, so a link brings back the same groove.

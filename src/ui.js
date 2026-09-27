@@ -100,7 +100,7 @@ export function renderPanel(el, state, act) {
   cycle(look, '', state.look === 'dark' ? 'DARK' : 'PAINTED', () => act.setLook(state.look === 'dark' ? 'painted' : 'dark'), 'PAINTED, or DARK: grey until struck (V)');
   cycle(look, 'COLOUR', state.profileLabel, act.cycleProfile, 'Colour profile (P)');
   cycle(look, 'TEXTURE', state.textureLabel, act.cycleTexture, 'Texture set: what is printed on the cubes (X)');
-  cycle(look, 'SHADER', state.shaderLabel, act.cycleShader, 'Shader style for the whole frame (S)');
+  cycle(look, 'SHADER', state.shaderLabel, act.cycleShader, 'Shader style on the cubes and the indicator, strongest on the cubes thrown furthest (S)');
 
   const motion = block('MOTION');
   meter(motion, 'ZONE', 'zone', 0, 4, 'How wide a touch reaches (first cell = one cube)');

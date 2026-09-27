@@ -14,7 +14,7 @@ import { openMic, analyzeHum, humToMelody } from './hum.js';
 import { INK } from './palette.js';
 import { PROFILES, PROFILE, VOICE_LANE, inkFor } from './profiles.js';
 import { TEXTURE_SETS, TEXTURE_SET, PATTERNS, LANE_LETTER, GLYPHS, glyphIndex, buildGlyphAtlas } from './textures.js';
-import { STYLES as SHADER_STYLES, StylePasses } from './styles.js';
+import { STYLES as SHADER_STYLES, setStyle, updateStyle } from './styles.js';
 import { createFxPass } from './fxpass.js';
 import { ClusterPhysics, TUNING } from './physics.js';
 import { Cubes } from './cubes.js';
@@ -62,7 +62,7 @@ const state = {
   timeline: params.get('timeline') !== '0',
   look: params.get('look') === 'dark' ? 'dark' : 'painted',
   profile: PROFILE.has(params.get('profile')) ? params.get('profile') : 'halfof8',
-  textureSet: TEXTURE_SET.has(params.get('texture')) ? params.get('texture') : params.get('texture') === '0' ? 'none' : 'graphic',
+  textureSet: TEXTURE_SET.has(params.get('texture')) ? params.get('texture') : params.get('texture') === '0' ? 'none' : 'macro',
   shader: SHADER_STYLES.some((st) => st.id === params.get('shader')) ? params.get('shader') : 'clean',
   keys: false,
   playing: false,
@@ -92,7 +92,7 @@ function syncUrl() {
   if (!state.timeline) q.set('timeline', '0');
   if (state.look !== 'painted') q.set('look', state.look);
   if (state.profile !== 'halfof8') q.set('profile', state.profile);
-  if (state.textureSet !== 'graphic') q.set('texture', state.textureSet);
+  if (state.textureSet !== 'macro') q.set('texture', state.textureSet);
   if (state.shader !== 'clean') q.set('shader', state.shader);
   if (state.grain !== 3) q.set('grain', String(state.grain));
   if (state.zone !== 1) q.set('zone', String(state.zone));
@@ -140,10 +140,8 @@ composer.addPass(new OutputPass());
 // Fringe and grain work on the finished, display-ready image, so their amounts read as they look.
 const fxPass = createFxPass();
 composer.addPass(fxPass);
-// The shader style comes last: it is how the finished frame is shown.
-const stylePasses = new StylePasses(composer);
-stylePasses.set(state.shader);
-stylePasses.resize(window.innerWidth, window.innerHeight, renderer.getPixelRatio());
+// The shader style is drawn on the cubes and the indicator themselves (styles.js, cubes.js).
+setStyle(state.shader);
 
 // `stage` floats; `cluster` is the big cube and is what spins in touch mode. The orbit belongs to
 // the stage, so in orbit mode the cluster is held still relative to it and every cube keeps its step.
@@ -188,12 +186,22 @@ const trail = (() => {
   return line;
 })();
 
-const indicator = new THREE.Mesh(
-  new THREE.BoxGeometry(0.46, 0.46, 0.46),
-  new THREE.MeshBasicMaterial({ color: new THREE.Color(INK).multiplyScalar(1.05), toneMapped: false }),
-);
+/*
+  The indicator is a cube like the block's own — same rounded shape, same shader, so the shader
+  styles play on it too — burning white, in a white halo. \`indicator\` is where it is (and holds
+  its light and halo); the cube itself is a one-instance Cubes drawn in the stage's space, so its
+  line from the block's centre is known to the styles.
+*/
+const INDICATOR_SIZE = 0.5;
+const INDICATOR_WHITE = new THREE.Color('#ffffff');
+const indicator = new THREE.Group();
 stage.add(indicator);
-const indicatorLight = new THREE.PointLight(0xfff1dc, 40, 13, 2);
+const indicatorCube = new Cubes([{ color: '#ffffff' }], stage, { ghosts: { spread: 1.1, gain: 0.9 } });
+indicatorCube.setLook({ roughness: 0.4, metalness: 0, iridescence: 0, peak: '#ffffff', texture: false, emit: 2.4 });
+indicatorCube.mesh.frustumCulled = false;
+const indicatorMatrix = new THREE.Matrix4();
+const indicatorScale = new THREE.Vector3().setScalar(INDICATOR_SIZE);
+const indicatorLight = new THREE.PointLight(0xffffff, 40, 13, 2);
 
 // A soft halo round the indicator: a sprite, not bloom, so the glow stays its own size and colour.
 const halo = (() => {
@@ -220,6 +228,10 @@ indicator.add(halo);
 function placeIndicator(theta) {
   orbitPoint(theta, indicator.position);
   indicator.rotation.set(theta * 2, theta * 3, 0);
+  indicatorCube.mesh.visible = indicator.visible;
+  // Always far out on its orbit, so the style is always on it, flaring on the beat.
+  indicatorMatrix.compose(indicator.position, indicator.quaternion, indicatorScale);
+  indicatorCube.set(0, indicatorMatrix, 1, 1, Math.min(1, 0.75 + 0.25 * pulse));
   const arr = trail.geometry.attributes.position.array;
   const v = new THREE.Vector3();
   for (let i = 0; i < TRAIL; i++) {
@@ -294,11 +306,12 @@ function build(seed) {
     heat: new Float32Array(pieces.length),
     glow: new Float32Array(pieces.length),
     white: new Float32Array(pieces.length),
+    fx: new Float32Array(pieces.length),
     display: pieces.map(() => new THREE.Color()),
     lastTouch: new Float64Array(pieces.length).fill(-1),
   };
   dressCubes();
-  cubes.update(pieces, physics, world.glow, world.white);
+  cubes.update(pieces, physics, world.glow, world.white, world.fx);
   cubes.mesh.computeBoundingSphere();
   cubes.mesh.boundingSphere.radius += TUNING.maxOffset; // cubes fly; keep raycasts from being culled early
 }
@@ -374,7 +387,7 @@ function textureSpec(i) {
   return {
     pattern: PATTERNS[spec.pattern],
     density: spec.fit ? -spec.density : spec.density,
-    fill: spec.fill ?? 0,
+    fill: spec.scale ?? spec.fill ?? 0, // for glyphs: the letter's size against the face
     glyph: [glyphIndex(letter), glyphIndex(String(number))],
   };
 }
@@ -398,12 +411,12 @@ function applyProfile() {
   fxPass.uniforms.uFringe.value = pr.fx.fringe;
   fxPass.uniforms.uGrain.value = pr.fx.grain;
   const accent = new THREE.Color(pr.accent);
-  indicator.material.color.copy(accent).multiplyScalar(1.05);
-  indicatorLight.color.copy(accent).lerp(new THREE.Color('#ffffff'), 0.5);
+  // The indicator and its glow are white in every profile — a breath of the accent at most.
+  indicatorLight.color.copy(INDICATOR_WHITE).lerp(accent, 0.12);
   ring.material.color.copy(accent);
   trail.material.color.copy(accent);
   cursor.material.color.copy(accent);
-  halo.material.color.copy(accent);
+  halo.material.color.copy(INDICATOR_WHITE).lerp(accent, 0.06);
   if (world) dressCubes();
 }
 
@@ -801,7 +814,7 @@ const act = {
   cycleShader() {
     const ids = SHADER_STYLES.map((st) => st.id);
     state.shader = ids[(ids.indexOf(state.shader) + 1) % ids.length];
-    stylePasses.set(state.shader);
+    setStyle(state.shader);
     syncUrl();
     refreshUi();
   },
@@ -927,7 +940,6 @@ function frameView() {
 window.addEventListener('resize', () => {
   renderer.setSize(window.innerWidth, window.innerHeight);
   composer.setSize(window.innerWidth, window.innerHeight);
-  stylePasses.resize(window.innerWidth, window.innerHeight, renderer.getPixelRatio());
   frameView();
 });
 
@@ -1093,7 +1105,7 @@ function frame(stamp) {
   if (world) {
     applyPending(t);
     world.physics.advance(dt);
-    const { heat, glow, white, physics, display, vivid, rest, ink, restInk } = world;
+    const { heat, glow, white, fx, physics, display, vivid, rest, ink, restInk } = world;
     const decay = Math.exp(-dt / HEAT_TAU);
     const dark = state.look === 'dark';
     // How far a hard hit usually throws a cube at this FORCE; DARK is fully white out there.
@@ -1101,6 +1113,8 @@ function frame(stamp) {
     for (let i = 0; i < heat.length; i++) {
       heat[i] *= decay;
       const off = physics.offset(i);
+      // The shader style's strength: none in place, full at the furthest a hard hit throws.
+      fx[i] = smoothstep(0.12, reach, off);
       if (dark) {
         // DARK: grey and colourless at rest; struck, it lights up in its colour, and the further
         // it is thrown from its place in the block the closer it gets to white.
@@ -1118,7 +1132,7 @@ function frame(stamp) {
         white[i] = glow[i] * 0.7;
       }
     }
-    world.cubes.update(world.pieces, physics, glow, white, dark ? display : null);
+    world.cubes.update(world.pieces, physics, glow, white, fx, dark ? display : null);
   }
   emissions.update(t);
   placeIndicator(transport.angle(t));
@@ -1134,9 +1148,8 @@ function frame(stamp) {
       pulses.splice(k, 1);
     }
   pulse *= Math.exp(-dt * 7);
-  stylePasses.update(t % 1000, pulse);
+  updateStyle(t % 1000, pulse, renderer.getPixelRatio(), window.innerHeight);
   halo.scale.setScalar(2.4 * (1 + 0.28 * pulse));
-  world?.cubes.setTime(t % 1000);
   composer.render();
   lastT = t;
   requestAnimationFrame(frame);
