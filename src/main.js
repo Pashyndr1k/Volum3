@@ -22,7 +22,7 @@ import { Emissions } from './emissions.js';
 import { Transport } from './transport.js';
 import { unlock, audioReady, play, now, ctx as audioCtx } from './audio.js';
 import { randomSeed } from './rng.js';
-import { renderPanel, renderHint } from './ui.js';
+import { renderPanel, renderPlay, renderHint } from './ui.js';
 
 // ---- Settings, from the URL like SQNCR ------------------------------------------------------
 
@@ -778,6 +778,7 @@ canvas.addEventListener('pointerleave', () => {
 
 const panel = document.getElementById('panel');
 const hint = document.getElementById('hint');
+const playEl = document.getElementById('play');
 
 const act = {
   async togglePlay() {
@@ -910,6 +911,20 @@ const act = {
   },
 };
 
+// The logo takes the profile's colours: its part colours, brightened in the DARK look as the
+// cubes are when they light, so the logo reads as the block does.
+function logoColors() {
+  const pr = profile();
+  const lanes = ['kick', 'snare', 'hat', 'bass', 'chord', 'melody'].map((l) => new THREE.Color(pr.lanes[l]));
+  const hsl = {};
+  return lanes.map((c) => {
+    c.getHSL(hsl);
+    if (hsl.s >= 0.2) c.setHSL(hsl.h, Math.min(1, hsl.s * 1.2 + 0.1), Math.max(0.55, Math.min(0.7, hsl.l)));
+    else c.setHSL(hsl.h, hsl.s, Math.max(0.72, hsl.l));
+    return `#${c.getHexString()}`;
+  });
+}
+
 function refreshUi() {
   renderPanel(
     panel,
@@ -920,7 +935,10 @@ function refreshUi() {
       shaderLabel: SHADER_STYLES.find((st) => st.id === state.shader).label,
     },
     act,
+    logoColors(),
   );
+  renderPlay(playEl, state, act);
+  timeline.setBpm(state.bpm);
   renderHint(hint, state, world ? world.pieces.length : 0);
 }
 
@@ -965,6 +983,7 @@ const timeline = new Timeline(timelineEl, {
   onNextStyle: () => act.nextStyle(),
   onRandom: () => act.randomPattern(),
   onPreset: () => act.presetPattern(),
+  onBpm: () => act.cycleBpm(),
   onHum: () => act.hum(),
   onEdit: (p) => setPattern(p),
   laneColor: (lane) => profile().lanes[lane],

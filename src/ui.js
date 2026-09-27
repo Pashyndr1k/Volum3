@@ -1,7 +1,8 @@
 /*
-  The top menu, in four blocks:
+  The top of the screen, centred: the logo and the settings on one line, and under them the play
+  controls — a large PLAY / STOP and ORBIT / TOUCH. The tempo lives in the timeline's header.
+  The settings, in three blocks:
 
-    PLAY    play/stop, tempo, orbit or touch
     LOOK    painted or dark, colour profile, texture set, shader style
     MOTION  touch zone, force, spin, return, marks thrown
     BLOCK   caves, a new block (its seed is in the tooltip and the URL), the timeline
@@ -27,7 +28,7 @@ const KEYS = [
   ['?', 'these keys'],
 ];
 
-export function renderPanel(el, state, act) {
+export function renderPanel(el, state, act, logoColors = []) {
   el.innerHTML = '';
   const block = (title) => {
     const b = document.createElement('div');
@@ -87,14 +88,16 @@ export function renderPanel(el, state, act) {
     parent.append(box);
   };
 
-  const play = block('PLAY');
+  // The logo, one letter per colour of the current profile.
   const brand = document.createElement('span');
   brand.className = 'brand';
-  brand.textContent = 'VOLUM3';
-  el.prepend(brand);
-  word(play, state.playing ? '■ STOP' : '▶ PLAY', act.togglePlay, { title: 'Play / stop (Space)' });
-  cycle(play, 'BPM', String(state.bpm), act.cycleBpm, 'Tempo: 70 · 85 · 100 · 115 · 130 · 145 (B)');
-  cycle(play, '', state.mode === 'orbit' ? 'ORBIT' : 'TOUCH', () => act.setMode(state.mode === 'orbit' ? 'touch' : 'orbit'), 'ORBIT: the indicator plays the block. TOUCH: you do (T)');
+  [...'VOLUM3'].forEach((ch, k) => {
+    const l = document.createElement('span');
+    l.textContent = ch;
+    if (logoColors.length) l.style.color = logoColors[k % logoColors.length];
+    brand.append(l);
+  });
+  el.append(brand);
 
   const look = block('LOOK');
   cycle(look, '', state.look === 'dark' ? 'DARK' : 'PAINTED', () => act.setLook(state.look === 'dark' ? 'painted' : 'dark'), 'PAINTED, or DARK: grey until struck (V)');
@@ -114,6 +117,22 @@ export function renderPanel(el, state, act) {
   word(cube, 'NEW', act.generate, { title: `A new block (G). This one is #${state.seed.toString(36).toUpperCase()}, kept in the URL` });
   word(cube, 'TIMELINE', act.toggleTimeline, { on: state.timeline, title: 'Show / hide the timeline (L)' });
   word(cube, '?', act.toggleKeys, { on: state.keys, title: 'Keyboard shortcuts' });
+}
+
+// The play controls, centred under the settings.
+export function renderPlay(el, state, act) {
+  el.innerHTML = '';
+  const b = document.createElement('span');
+  b.className = `play-btn${state.playing ? ' on' : ''}`;
+  b.textContent = state.playing ? '■ STOP' : '▶ PLAY';
+  b.title = 'Play / stop (Space)';
+  b.addEventListener('click', act.togglePlay);
+  const m = document.createElement('span');
+  m.className = 'mode';
+  m.textContent = state.mode === 'orbit' ? 'ORBIT' : 'TOUCH';
+  m.title = 'ORBIT: the indicator plays the block. TOUCH: you do (T)';
+  m.addEventListener('click', () => act.setMode(state.mode === 'orbit' ? 'touch' : 'orbit'));
+  el.append(b, m);
 }
 
 export function renderHint(el, state, count) {

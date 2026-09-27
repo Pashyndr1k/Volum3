@@ -22,14 +22,14 @@ Click anywhere once to enable sound, since browsers block audio until the page g
 
 **A fresh page opens** in DARK with the PRISM colours, no texture, the CLEAN shader, ZONE 1, FORCE 4, SPIN 4, RETURN 2, MARKS 4 and CAVES 3 (`DEFAULTS` in `src/main.js`). The URL only records settings that differ from these.
 
-**The top menu** is four groups: PLAY (play, tempo, orbit/touch), LOOK (painted/dark, colour, texture, shader), MOTION and BLOCK. Choices are one word that cycles on click; levels are small meters (click a cell).
+**The top** is centred: the VOLUM3 logo (its letters in the current colour profile's colours) and three groups of settings, LOOK (painted/dark, colour, texture, shader), MOTION and BLOCK; under them, a large PLAY / STOP and the ORBIT / TOUCH switch. The tempo (BPM) sits in the timeline's header. Choices are one word that cycles on click; levels are small meters (click a cell).
 
 **PLAY and LOOK**
 
 | Input | Action |
 |---|---|
 | **Space** / PLAY | Start or stop the orbit |
-| BPM / **B** | Switch tempo: each press goes to the next of 70 · 85 · 100 · 115 · 130 · 145, and wraps around |
+| BPM (timeline) / **B** | Switch tempo: each press goes to the next of 70 · 85 · 100 · 115 · 130 · 145, and wraps around |
 | **T** / MODE | Switch between ORBIT and TOUCH |
 | **G** / GENERATE | New seed: a new block. The pattern stays and is re-dealt to the new cubes. |
 | EMISSION | How much a strike throws (1 = dots only … 5 = everything, furthest) |

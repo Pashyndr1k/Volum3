@@ -24,16 +24,26 @@ body {
 #view { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
 
 /*
-  The top menu: one compact line of blocks (PLAY · LOOK · MOTION · BLOCK), wrapping when narrow.
-  Each block is headed by a small dim label and set off by a hairline; levels are rows of cells.
+  The top: a centred column — the logo and settings on one line (wrapping when narrow), the play
+  controls under them, then the key list when shown. Each settings block is headed by a small dim
+  label and set off by a hairline; levels are rows of cells.
 */
-#panel {
+#top {
   position: fixed;
   left: 20px;
-  top: 16px;
   right: 20px;
+  top: 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  pointer-events: none;
+}
+#top > * { pointer-events: auto; }
+#panel {
   display: flex;
   flex-wrap: wrap;
+  justify-content: center;
   align-items: center;
   gap: 8px 0;
   font-size: 11px;
@@ -41,7 +51,8 @@ body {
   letter-spacing: 0.05em;
   text-transform: uppercase;
 }
-#panel .brand { color: var(--ink); font-weight: 500; margin-right: 14px; }
+#panel .brand { font-weight: 500; margin-right: 14px; letter-spacing: 0.12em; }
+#panel .brand span { transition: color 0.4s; }
 #panel .block {
   display: inline-flex;
   align-items: center;
@@ -59,31 +70,53 @@ body {
 #panel .word:hover { color: var(--accent); }
 #panel .word.on { color: var(--ink); }
 #panel .word.off { color: #55534c; }
-#panel .word.seed { cursor: default; }
-#panel .word.seed:hover { color: #55534c; }
 #panel .cells { display: inline-flex; gap: 2px; }
 #panel .cell { width: 5px; height: 9px; background: #2c2b29; cursor: pointer; }
 #panel .cell.lit { background: var(--ink); }
 #panel .cell:hover { background: var(--accent); }
 
+/* The play controls: one large PLAY / STOP, and the mode beside it. */
+#play {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  text-transform: uppercase;
+}
+#play .play-btn {
+  font-size: 15px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  line-height: 20px;
+  padding: 8px 22px;
+  border: 1px solid #3a3935;
+  color: var(--ink);
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+#play .play-btn:hover { border-color: var(--accent); color: var(--accent); }
+#play .play-btn.on { border-color: var(--ink); }
+#play .mode { font-size: 11px; letter-spacing: 0.08em; color: var(--dim); cursor: pointer; }
+#play .mode:hover { color: var(--accent); }
+
 #hint {
-  position: fixed;
-  left: 20px;
-  top: 64px;
   font-size: 10px;
   line-height: 16px;
   letter-spacing: 0.08em;
   color: var(--dim);
   text-transform: uppercase;
+  text-align: center;
   pointer-events: none;
 }
-#hint .keys { display: grid; grid-template-columns: 44px auto; gap: 0 10px; margin: 4px 0 6px; justify-content: start; }
+#hint:empty { display: none; }
+#hint .keys { display: grid; grid-template-columns: 44px auto; gap: 0 10px; margin: 4px 0 6px; justify-content: center; text-align: left; }
 #hint .key { color: var(--ink); }
 
 @media (max-width: 640px) {
-  #panel { left: 12px; right: 12px; top: 12px; font-size: 10px; }
-  #panel .block { padding: 0 10px 0 8px; gap: 8px; }
-  #hint { left: 12px; top: 96px; }
+  #top { left: 12px; right: 12px; top: 12px; gap: 10px; }
+  #panel { font-size: 10px; }
+  #panel .block { padding: 0 8px; gap: 6px 8px; flex-wrap: wrap; justify-content: center; white-space: normal; border-left: 0; }
+  #panel .brand { width: 100%; text-align: center; margin: 0 0 2px; }
+  #play .play-btn { font-size: 13px; padding: 6px 16px; }
 }
 
 /*

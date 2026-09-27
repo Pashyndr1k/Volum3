@@ -8,7 +8,8 @@ import { LANES, STYLES, STEPS, BAR, chordOf, melodyNotes, NOTE_NAMES } from './p
   The playhead is the indicator's angle.
 
   Click a mark to remove it, an empty spot to add one, a lane's letter to mute it. The header:
-  the style name (click for the next style), NEW rolls a new pattern, HUM records one.
+  the style name (click for the next style), NEW rolls a new pattern, HUM records one, BPM
+  cycles the tempo.
 */
 
 const LABEL_W = 14;
@@ -28,6 +29,7 @@ export class Timeline {
     this.pattern = null;
     this.muted = new Set();
     this.status = '';
+    this.bpm = 0;
     this.rec = null; // { phase: 'count' | 'rec', count, level }
     this.lanes = [];
     this.head = document.createElement('div');
@@ -66,6 +68,12 @@ export class Timeline {
     this.resize();
   }
 
+  setBpm(bpm) {
+    if (bpm === this.bpm) return;
+    this.bpm = bpm;
+    this.renderHead();
+  }
+
   setStatus(text) {
     this.status = text;
     this.renderHead();
@@ -89,6 +97,7 @@ export class Timeline {
     word('NEW', 'word on', () => this.h.onRandom(), hummed ? 'A new band around your melody, same style' : 'A new rhythm and melody in this style');
     word(this.rec ? 'STOP' : 'HUM', `word ${this.rec ? 'rec' : 'on'}`, () => this.h.onHum(), 'Hum a melody: one bar count-in, then four bars');
     word('PRESET', 'word dim', () => this.h.onPreset(), 'Back to the default groove');
+    word(`BPM ${this.bpm}`, 'word on bpm', () => this.h.onBpm(), 'Tempo: 70 · 85 · 100 · 115 · 130 · 145 (B)');
     const info = this.status || (p ? `${NOTE_NAMES[p.root]} ${p.scale === 'major' ? 'MAJOR' : p.scale === 'minor' ? 'MINOR' : p.scale.toUpperCase()}` : '');
     word(info, `status${this.rec ? ' rec' : ''}`);
   }
