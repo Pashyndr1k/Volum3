@@ -11,7 +11,9 @@ import { presetPattern, generatePattern, accompany, SCALES, STYLE, STYLES } from
 import { mapPattern } from './mapper.js';
 import { Timeline } from './timeline.js';
 import { openMic, analyzeHum, humToMelody } from './hum.js';
-import { pairFor, INK } from './palette.js';
+import { INK } from './palette.js';
+import { PROFILES, PROFILE, PATTERNS, LANE_PATTERN, VOICE_LANE, inkFor } from './profiles.js';
+import { createFxPass } from './fxpass.js';
 import { ClusterPhysics, TUNING } from './physics.js';
 import { Cubes } from './cubes.js';
 import { Emissions } from './emissions.js';
@@ -36,8 +38,6 @@ const READ_LATENCY = 0.04; // a still pointer's notes are scheduled this far ahe
 const HEAT_TAU = 0.3; // seconds; a struck cube is back to its colour in about 4–6 steps
 const RETOUCH = 0.25; // a cube can't be touched again sooner than this, even at the edge between two
 const GHOST = 0.14; // how hard the indicator brushes a cube that has no note this orbit
-const IDLE_COLOR = '#2b2a27'; // cubes without a note go dark, so the block shows the pattern
-const DARK_GREY = new THREE.Color('#1a1a1a'); // DARK look: every cube at rest
 const BPM_STEPS = [70, 85, 100, 115, 130, 145]; // the BPM switch cycles through these
 
 // Panel levels → physical values. Level 0/1 is the first entry.
@@ -59,6 +59,8 @@ const state = {
   caves: intParam('caves', 1, 3, 2),
   timeline: params.get('timeline') !== '0',
   look: params.get('look') === 'dark' ? 'dark' : 'painted',
+  profile: PROFILE.has(params.get('profile')) ? params.get('profile') : 'halfof8',
+  texture: params.get('texture') !== '0',
   playing: false,
   unlocked: false,
 };
@@ -85,6 +87,8 @@ function syncUrl() {
   if (state.bpm !== pattern.naturalBpm) q.set('bpm', String(state.bpm));
   if (!state.timeline) q.set('timeline', '0');
   if (state.look !== 'painted') q.set('look', state.look);
+  if (state.profile !== 'halfof8') q.set('profile', state.profile);
+  if (!state.texture) q.set('texture', '0');
   if (state.grain !== 3) q.set('grain', String(state.grain));
   if (state.zone !== 1) q.set('zone', String(state.zone));
   if (state.force !== 3) q.set('force', String(state.force));
@@ -128,6 +132,9 @@ composer.addPass(new RenderPass(scene, camera));
 const bloom = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.5, 0.45, 0.86);
 composer.addPass(bloom);
 composer.addPass(new OutputPass());
+// Fringe and grain work on the finished, display-ready image, so their amounts read as they look.
+const fxPass = createFxPass();
+composer.addPass(fxPass);
 
 // `stage` floats; `cluster` is the big cube and is what spins in touch mode. The orbit belongs to
 // the stage, so in orbit mode the cluster is held still relative to it and every cube keeps its step.
@@ -178,6 +185,7 @@ const indicator = new THREE.Mesh(
 );
 stage.add(indicator);
 const indicatorLight = new THREE.PointLight(0xfff1dc, 40, 13, 2);
+const profile = () => PROFILE.get(state.profile);
 indicator.add(indicatorLight);
 
 function placeIndicator(theta) {
@@ -260,36 +268,80 @@ function build(seed) {
     display: pieces.map(() => new THREE.Color()),
     lastTouch: new Float64Array(pieces.length).fill(-1),
   };
-  world.vivid = vividColors(world);
+  dressCubes();
   cubes.update(pieces, physics, world.glow, world.white);
   cubes.mesh.computeBoundingSphere();
   cubes.mesh.boundingSphere.radius += TUNING.maxOffset; // cubes fly; keep raycasts from being culled early
 }
 
-// A cube takes the colour of the first part it plays; a cube with nothing to play goes dark.
+// The lane a cube belongs to: the part of its first note, or none for a cube with nothing to play.
+function laneOf(mapping, i) {
+  return mapping.cubeEvents[i][0]?.lane ?? null;
+}
+
+// A cube takes its profile's colour for the part it plays; a cube with nothing to play stays dim.
 function colorOf(mapping, i) {
-  const ev = mapping.cubeEvents[i][0];
-  return ev ? pairFor(VOICE.get(pattern.voices[ev.lane]).index).bg : IDLE_COLOR;
+  const lane = laneOf(mapping, i);
+  return lane ? profile().lanes[lane] : profile().idle;
 }
 
 /*
   The DARK look's colours: each cube's part colour, pushed brighter and more saturated so it reads
-  as light against the dark block. A cube with no note uses its fallback voice's colour, so even
-  a brushed one shows a hue.
+  as light against the dark block. A cube with no note borrows the lane of its fallback voice, so
+  even a brushed one shows a hue. Near-neutral colours (BONE, PRISM) stay as they are.
 */
 function vividColors(w) {
   const hsl = {};
   return w.pieces.map((p, i) => {
-    const ev = w.mapping.cubeEvents[i][0];
-    const c = new THREE.Color(ev ? pairFor(VOICE.get(pattern.voices[ev.lane]).index).bg : pairFor(p.voice.index).bg);
+    const lane = laneOf(w.mapping, i) ?? VOICE_LANE[p.voice.id] ?? 'melody';
+    const c = new THREE.Color(profile().lanes[lane]);
     c.getHSL(hsl);
-    return c.setHSL(hsl.h, Math.min(1, hsl.s * 1.6 + 0.2), Math.max(0.5, Math.min(0.62, hsl.l * 1.1 + 0.08)));
+    if (hsl.s < 0.2) return c;
+    return c.setHSL(hsl.h, Math.min(1, hsl.s * 1.4 + 0.15), Math.max(0.5, Math.min(0.64, hsl.l * 1.05 + 0.06)));
   });
 }
 
-// The colour a cube's thrown marks take: what it looks like when it's struck.
+// The colour a cube's thrown marks take: its own when struck, or one of the profile's mark inks.
 function markColor(i) {
+  const marks = profile().marks;
+  if (Array.isArray(marks)) return new THREE.Color(marks[Math.floor(Math.random() * marks.length)]);
   return state.look === 'dark' ? world.vivid[i] : world.cubes.base[i];
+}
+
+/*
+  Dress the cubes for the current profile: colour per part, the pattern for its kind (texture),
+  the ink it's printed in, and the surface finish. The DARK look keeps its own per-frame colours
+  and ink; these are its targets.
+*/
+function dressCubes() {
+  const pr = profile();
+  const { pieces, mapping, cubes } = world;
+  cubes.setColors(pieces.map((_, i) => colorOf(mapping, i)));
+  world.vivid = vividColors(world);
+  world.ink = pieces.map((_, i) => new THREE.Color(inkFor(pr, laneOf(mapping, i) ?? 'kick')));
+  world.restInk = new THREE.Color(pr.rest).lerp(new THREE.Color('#ffffff'), 0.08);
+  world.rest = new THREE.Color(pr.rest);
+  cubes.setPatterns(pieces.map((_, i) => PATTERNS[LANE_PATTERN[laneOf(mapping, i) ?? 'idle']]), world.ink);
+  cubes.setLook({ ...pr.material, peak: pr.peak, texture: state.texture, emit: pr.fx.glow });
+  if (state.look === 'dark') cubes.restore();
+}
+
+// The rest of the frame for the current profile: background, light, bloom, fringe, grain.
+function applyProfile() {
+  const pr = profile();
+  scene.background.set(pr.bg);
+  bloom.strength = pr.fx.bloom[0];
+  bloom.radius = pr.fx.bloom[1];
+  bloom.threshold = pr.fx.bloom[2];
+  fxPass.uniforms.uFringe.value = pr.fx.fringe;
+  fxPass.uniforms.uGrain.value = pr.fx.grain;
+  const accent = new THREE.Color(pr.accent);
+  indicator.material.color.copy(accent).multiplyScalar(1.05);
+  indicatorLight.color.copy(accent).lerp(new THREE.Color('#ffffff'), 0.5);
+  ring.material.color.copy(accent);
+  trail.material.color.copy(accent);
+  cursor.material.color.copy(accent);
+  if (world) dressCubes();
 }
 
 function idleBuckets(pieces, mapping) {
@@ -302,8 +354,7 @@ function idleBuckets(pieces, mapping) {
 function remap() {
   world.mapping = mapPattern(pattern, world.pieces, STEPS);
   world.idleByStep = idleBuckets(world.pieces, world.mapping);
-  world.cubes.setColors(world.pieces.map((_, i) => colorOf(world.mapping, i)));
-  world.vivid = vividColors(world);
+  dressCubes();
 }
 
 function setPattern(p) {
@@ -667,9 +718,22 @@ const act = {
     syncUrl();
     refreshUi();
   },
+  cycleProfile() {
+    const ids = PROFILES.map((p) => p.id);
+    state.profile = ids[(ids.indexOf(state.profile) + 1) % ids.length];
+    applyProfile();
+    syncUrl();
+    refreshUi();
+  },
+  toggleTexture() {
+    state.texture = !state.texture;
+    world?.cubes.setLook({ ...profile().material, peak: profile().peak, texture: state.texture, emit: profile().fx.glow });
+    syncUrl();
+    refreshUi();
+  },
   setLook(look) {
     state.look = look;
-    if (look === 'painted') world?.cubes.restore();
+    if (look === 'painted' && world) dressCubes();
     syncUrl();
     refreshUi();
   },
@@ -742,7 +806,7 @@ const act = {
 };
 
 function refreshUi() {
-  renderPanel(panel, state, act);
+  renderPanel(panel, { ...state, profileLabel: profile().label }, act);
   renderHint(hint, state, world ? world.pieces.length : 0);
 }
 
@@ -757,6 +821,8 @@ window.addEventListener('keydown', (e) => {
   else if (e.key === 'h' || e.key === 'H') act.hum();
   else if (e.key === 'b' || e.key === 'B') act.cycleBpm();
   else if (e.key === 'v' || e.key === 'V') act.setLook(state.look === 'dark' ? 'painted' : 'dark');
+  else if (e.key === 'p' || e.key === 'P') act.cycleProfile();
+  else if (e.key === 'x' || e.key === 'X') act.toggleTexture();
   else if (e.key === 'Escape' && hum.active) stopHum('CANCELLED');
 });
 
@@ -785,6 +851,7 @@ const timeline = new Timeline(timelineEl, {
   onPreset: () => act.presetPattern(),
   onHum: () => act.hum(),
   onEdit: (p) => setPattern(p),
+  laneColor: (lane) => profile().lanes[lane],
 });
 
 /*
@@ -882,6 +949,7 @@ const up = new THREE.Vector3();
 const right = new THREE.Vector3();
 const qStep = new THREE.Quaternion();
 const orbitAxis = new THREE.Vector3();
+const tmpC = new THREE.Color();
 
 let lastT = now();
 const smoothstep = (a, b, x) => {
@@ -935,7 +1003,7 @@ function frame(stamp) {
   if (world) {
     applyPending(t);
     world.physics.advance(dt);
-    const { heat, glow, white, physics, display, vivid } = world;
+    const { heat, glow, white, physics, display, vivid, rest, ink, restInk } = world;
     const decay = Math.exp(-dt / HEAT_TAU);
     const dark = state.look === 'dark';
     // How far a hard hit usually throws a cube at this FORCE; DARK is fully white out there.
@@ -948,7 +1016,10 @@ function frame(stamp) {
         // it is thrown from its place in the block the closer it gets to white.
         // Small wobbles from a neighbour's hit don't count; only a real strike or throw lights it.
         const active = Math.min(1, heat[i] * 1.1 + Math.max(0, off - 0.2) * 0.6);
-        display[i].copy(DARK_GREY).lerp(vivid[i], active);
+        display[i].copy(rest).lerp(vivid[i], active);
+        // The pattern is there at rest, faint and colourless; it takes its ink as the cube lights.
+        tmpC.copy(restInk).lerp(ink[i], active);
+        world.cubes.setInk(i, tmpC);
         white[i] = smoothstep(0.5, reach, off);
         glow[i] = active * 0.4 + white[i] * 0.4;
       } else {
@@ -965,6 +1036,7 @@ function frame(stamp) {
   if (state.timeline) timeline.draw(Math.max(0, transport.position(t)), transport.playing);
 
   if (state.mode === 'orbit') controls.update();
+  fxPass.uniforms.uTime.value = (t % 100) * 13.7;
   composer.render();
   lastT = t;
   requestAnimationFrame(frame);
@@ -972,6 +1044,7 @@ function frame(stamp) {
 
 timeline.setPattern(pattern);
 frameView();
+applyProfile();
 build(state.seed);
 applyTuning();
 controls.enabled = state.mode === 'orbit';

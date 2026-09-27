@@ -20,4 +20,5 @@ Built on a close reading of halfof8's [SQNCR](https://seq.halfof8.com/).
 By hand: `npm install && npm run dev`.
 
 * [docs/SQNCR_MECHANICS.md](docs/SQNCR_MECHANICS.md): every mechanic of SQNCR, reverse-engineered, and the 3D design
+* [docs/VISUAL_PROFILES.md](docs/VISUAL_PROFILES.md): the colour profiles and cube textures, and the reference boards they come from
 * [docs/PROTOTYPE.md](docs/PROTOTYPE.md): how this prototype works, its controls, and its physics tuning

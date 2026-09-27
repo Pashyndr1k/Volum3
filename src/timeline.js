@@ -1,6 +1,4 @@
 import { LANES, STYLES, STEPS, BAR, chordOf, melodyNotes, NOTE_NAMES } from './patterns.js';
-import { VOICE } from './music.js';
-import { pairFor } from './palette.js';
 
 /*
   The timeline: one orbit of the pattern laid flat — 64 sixteenths across, a thin row per part.
@@ -176,8 +174,7 @@ export class Timeline {
     c.textBaseline = 'middle';
     c.textAlign = 'left';
     for (const id of this.lanes) {
-      const voice = VOICE.get(p.voices[id]);
-      c.fillStyle = this.muted.has(id) || !this.used.has(id) ? FAINT : pairFor(voice ? voice.index : 0).bg;
+      c.fillStyle = this.muted.has(id) || !this.used.has(id) ? FAINT : this.h.laneColor(id);
       c.fillText(LETTER[id], 0, this.laneY(id) + (id === 'melody' ? 5 : LANE_H / 2 + 0.5));
     }
 

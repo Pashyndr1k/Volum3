@@ -52,6 +52,8 @@ export function renderPanel(el, state, act) {
     { text: 'PAINTED', on: state.look === 'painted', onClick: () => act.setLook('painted') },
     { text: 'DARK', on: state.look === 'dark', onClick: () => act.setLook('dark') },
   ], 'DARK: cubes stay grey until struck, light up in colour, and turn white the further they fly');
+  ctl('PROFILE', [{ text: state.profileLabel, on: true, onClick: act.cycleProfile }], 'Colour profile — click (or P) for the next');
+  ctl(null, [{ text: 'TEXTURE', on: state.texture, onClick: act.toggleTexture }], 'Patterns on the cubes (X)');
 
   newRow();
   ctl('ZONE', levels('zone', 0, 4), 'How wide a touch reaches. 0 = just the cube under the pointer');
@@ -65,7 +67,7 @@ export function renderHint(el, state, count) {
   const sound = state.unlocked ? '' : 'CLICK FOR SOUND · ';
   const how =
     state.mode === 'orbit'
-      ? 'SPACE PLAY · R NEW RHYTHM · H HUM · B TEMPO · V LOOK · L TIMELINE · T TOUCH · G NEW BLOCK'
+      ? 'SPACE PLAY · R NEW RHYTHM · H HUM · B TEMPO · V LOOK · P PROFILE · X TEXTURE · L TIMELINE · T TOUCH · G NEW BLOCK'
       : 'HOLD THE POINTER ON THE BLOCK · IT TURNS IN TEMPO · DRAG TO SPIN · T ORBIT';
   el.textContent = `${sound}${how} · ${count} CUBES`;
 }
