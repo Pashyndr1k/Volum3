@@ -19,3 +19,8 @@ Built on a close reading of halfof8's [SQNCR](https://seq.halfof8.com/).
 
 By hand: `npm install && npm run dev`.
 
+
+## Also here
+
+[`cursor/`](cursor/) holds **Inertia Cursor**, a separate Windows tray app that swaps the arrow
+pointer for one that leans into your mouse movement and springs back upright when you stop.

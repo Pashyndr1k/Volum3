@@ -1,0 +1,31 @@
+name: Inertia Cursor
+
+on:
+  push:
+    paths: ["cursor/**", ".github/workflows/inertia-cursor.yml"]
+  pull_request:
+    paths: ["cursor/**", ".github/workflows/inertia-cursor.yml"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S cursor -B cursor/build -A x64
+      - name: Build
+        run: cmake --build cursor/build --config Release
+      - name: Test the motion model
+        run: ctest --test-dir cursor/build -C Release --output-on-failure
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item cursor/build/Release/InertiaCursor.exe dist/
+          Copy-Item cursor/inertia-cursor.ini dist/
+          Copy-Item cursor/README.md dist/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: InertiaCursor
+          path: dist/
